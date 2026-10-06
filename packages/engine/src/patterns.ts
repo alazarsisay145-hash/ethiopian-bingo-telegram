@@ -1,4 +1,4 @@
-import { CARD_SIZE, FREE_CELL_INDEX, type BingoCard, type WinPatternId } from '@bingo/shared';
+import { CARD_SIZE, type WinPatternId } from '@bingo/shared';
 
 export type { WinPatternId } from '@bingo/shared';
 
@@ -40,25 +40,3 @@ export const WIN_PATTERNS: readonly WinPattern[] = [
     Array.from({ length: CARD_SIZE ** 2 }, (_, index) => index),
   ),
 ];
-
-export interface WinResult {
-  won: boolean;
-  patterns: WinPatternId[];
-}
-
-export function checkWin(
-  card: BingoCard,
-  calledNumbers: ReadonlySet<number>,
-  patterns: readonly WinPattern[] = WIN_PATTERNS,
-): WinResult {
-  const completed = patterns
-    .filter((candidate) =>
-      [...candidate.cells].every((index) => {
-        if (index === FREE_CELL_INDEX) return true;
-        const number = card.cells[index];
-        return number !== undefined && calledNumbers.has(number);
-      }),
-    )
-    .map(({ id }) => id);
-  return { won: completed.length > 0, patterns: completed };
-}

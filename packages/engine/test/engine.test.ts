@@ -6,13 +6,46 @@ import {
   WIN_PATTERNS,
   checkWin,
   commitSeed,
+  createRng,
   generateCard,
   generateDrawSequence,
+  sha256Hex,
   validateCard,
   verifySeed,
 } from '../src/index.js';
 
 const seedAndCard = fc.tuple(fc.string(), fc.integer({ min: 1, max: 1_000_000 }));
+
+describe('randomness', () => {
+  it('hashes the known SHA-256 UTF-8 vector', () => {
+    expect(sha256Hex('abc')).toBe(
+      'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
+    );
+  });
+
+  it('keeps SHA-256 little-endian seeded mulberry32 output stable', () => {
+    const rng = createRng('room-seed');
+    expect(Array.from({ length: 5 }, () => rng())).toEqual([
+      0.9243903183378279, 0.710203340742737, 0.438829475780949, 0.1502860877662897,
+      0.25408773962408304,
+    ]);
+  });
+
+  it('creates independent reproducible generators with values in [0, 1)', () => {
+    fc.assert(
+      fc.property(fc.string(), (seed) => {
+        const first = createRng(seed);
+        const second = createRng(seed);
+        for (let index = 0; index < 100; index += 1) {
+          const value = first();
+          expect(value).toBe(second());
+          expect(value).toBeGreaterThanOrEqual(0);
+          expect(value).toBeLessThan(1);
+        }
+      }),
+    );
+  });
+});
 
 describe('cards', () => {
   it('keeps the SHA-256 / mulberry32 card vector stable', () => {

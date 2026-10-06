@@ -1,7 +1,7 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { AppError, ErrorCode, telegramUserSchema } from '@bingo/shared';
 import type { z } from 'zod';
-import type { AuthenticationPort, UserProfile } from '../domain/ports.js';
+import type { AuthenticationPort, UserProfile } from '../../domain/ports.js';
 
 export interface InitDataOptions {
   maxAgeSeconds?: number;

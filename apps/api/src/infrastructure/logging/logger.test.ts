@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { testEnv } from '../test-support.js';
+import { testEnv } from '../../test-support.js';
 import { createLogger } from './logger.js';
 
 describe('production logging', () => {
@@ -18,6 +18,10 @@ describe('production logging', () => {
       DATABASE_URL: 'private-database-url',
       REDIS_URL: 'private-redis-url',
       initData: 'private-telegram-data',
+      err: new Error('private-error-message'),
+      error: { message: 'private-error-object', stack: 'private-stack' },
+      config: { botToken: 'private-nested-token', JWT_SECRET: 'private-nested-secret' },
+      env: { CUSTOM_SECRET: 'private-environment-value' },
     }, 'Request logged');
     const entry = output.join('');
     expect(entry).not.toContain('private');
@@ -25,6 +29,8 @@ describe('production logging', () => {
       req: { method: 'GET', url: '/healthz' },
       BOT_TOKEN: '[REDACTED]', JWT_SECRET: '[REDACTED]',
       DATABASE_URL: '[REDACTED]', REDIS_URL: '[REDACTED]', initData: '[REDACTED]',
+      err: '[REDACTED]', error: '[REDACTED]', env: '[REDACTED]',
+      config: { botToken: '[REDACTED]', JWT_SECRET: '[REDACTED]' },
     });
   });
 });

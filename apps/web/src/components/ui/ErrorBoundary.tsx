@@ -13,8 +13,13 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, { failed: 
   }
 
   override render(): ReactNode {
-    return this.state.failed
-      ? <main role="alert"><h1>Something went wrong</h1><p>Please close and reopen the app.</p></main>
-      : this.props.children;
+    return this.state.failed ? (
+      <main role="alert">
+        <h1>Something went wrong</h1>
+        <p>Please close and reopen the app.</p>
+      </main>
+    ) : (
+      this.props.children
+    );
   }
 }

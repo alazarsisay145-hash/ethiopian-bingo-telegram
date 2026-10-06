@@ -18,15 +18,36 @@ export function TelegramGate({ children }: { children: (session: TelegramSession
   const [telegram, setTelegram] = useState<TelegramSession | null | undefined>(undefined);
   useEffect(() => {
     let active = true;
-    void initializeTelegram().then((session) => { if (active) setTelegram(session); });
-    return () => { active = false; };
+    void initializeTelegram().then((session) => {
+      if (active) setTelegram(session);
+    });
+    return () => {
+      active = false;
+    };
   }, []);
-  if (telegram === undefined) return <main><p role="status">Checking Telegram environment…</p></main>;
-  if (!telegram) return <main><h1>Open this app inside Telegram</h1><p>Use the bot’s Mini App button to continue.</p></main>;
+  if (telegram === undefined)
+    return (
+      <main>
+        <p role="status">Checking Telegram environment…</p>
+      </main>
+    );
+  if (!telegram)
+    return (
+      <main>
+        <h1>Open this app inside Telegram</h1>
+        <p>Use the bot’s Mini App button to continue.</p>
+      </main>
+    );
   return <>{children(telegram)}</>;
 }
 
-export function AppProviders({ telegram, children }: { telegram: TelegramSession; children: ReactNode }) {
+export function AppProviders({
+  telegram,
+  children,
+}: {
+  telegram: TelegramSession;
+  children: ReactNode;
+}) {
   const [services] = useState<AppServices>(() => {
     const environment = readEnvironment(import.meta.env, window.location.origin);
     const session = createSessionStore();
@@ -38,7 +59,9 @@ export function AppProviders({ telegram, children }: { telegram: TelegramSession
   });
   useEffect(() => {
     services.socket.connect();
-    return () => { services.socket.disconnect(); };
+    return () => {
+      services.socket.disconnect();
+    };
   }, [services]);
   return <ServicesContext.Provider value={services}>{children}</ServicesContext.Provider>;
 }

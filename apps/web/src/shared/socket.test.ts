@@ -10,7 +10,13 @@ vi.mock('socket.io-client', () => ({ io: mock.io }));
 import { createBingoSocket, sendCommand } from './socket';
 import { createSessionStore } from './store';
 
-const started = { gameId: 'game-1', roomId: 'room-1', seedHash: 'a'.repeat(64), drawIntervalMs: 3000, seq: 1 };
+const started = {
+  gameId: 'game-1',
+  roomId: 'room-1',
+  seedHash: 'a'.repeat(64),
+  drawIntervalMs: 3000,
+  seq: 1,
+};
 
 describe('typed socket contracts', () => {
   beforeEach(() => {
@@ -25,7 +31,9 @@ describe('typed socket contracts', () => {
   it('does not connect automatically and passes only real initData for server authentication', () => {
     createBingoSocket('https://api.example', 'launch-data', createSessionStore());
     expect(mock.io).toHaveBeenCalledWith('https://api.example', {
-      autoConnect: false, auth: { initData: 'launch-data' }, transports: ['websocket'],
+      autoConnect: false,
+      auth: { initData: 'launch-data' },
+      transports: ['websocket'],
     });
   });
 
@@ -39,10 +47,15 @@ describe('typed socket contracts', () => {
     const socket = createBingoSocket('https://api.example', 'raw', session);
     const state = session.store.getState();
     sendCommand(socket, 'card:select', { roomId: 'room-1', cardNumber: 4 });
-    expect(mock.socket.emit).toHaveBeenCalledWith('card:select', { roomId: 'room-1', cardNumber: 4 });
+    expect(mock.socket.emit).toHaveBeenCalledWith('card:select', {
+      roomId: 'room-1',
+      cardNumber: 4,
+    });
     expect(session.store.getState()).toBe(state);
     mock.socket.emit.mockClear();
-    expect(() => sendCommand(socket, 'card:select', { roomId: 'room-1', cardNumber: -1 })).toThrow();
+    expect(() =>
+      sendCommand(socket, 'card:select', { roomId: 'room-1', cardNumber: -1 }),
+    ).toThrow();
     expect(mock.socket.emit).not.toHaveBeenCalled();
   });
 
@@ -51,12 +64,30 @@ describe('typed socket contracts', () => {
     const session = createSessionStore();
     createBingoSocket('https://api.example', 'raw', session);
     mock.handlers.get('game:started')?.(started);
-    mock.handlers.get('game:number')?.({ gameId: 'game-1', number: 7, calledNumbers: [4, 7], seq: 3 });
-    mock.handlers.get('game:number')?.({ gameId: 'game-1', number: 8, calledNumbers: [4, 7, 8], seq: 4 });
+    mock.handlers.get('game:number')?.({
+      gameId: 'game-1',
+      number: 7,
+      calledNumbers: [4, 7],
+      seq: 3,
+    });
+    mock.handlers.get('game:number')?.({
+      gameId: 'game-1',
+      number: 8,
+      calledNumbers: [4, 7, 8],
+      seq: 4,
+    });
     expect(mock.socket.emit).toHaveBeenCalledTimes(1);
     expect(mock.socket.emit).toHaveBeenCalledWith('state:resync', { gameId: 'game-1', lastSeq: 1 });
     mock.handlers.get('state:snapshot')?.({
-      game: { gameId: 'game-1', roomId: 'room-1', seedHash: started.seedHash, status: 'running', calledNumbers: [4, 7, 8], seq: 4 }, seq: 4,
+      game: {
+        gameId: 'game-1',
+        roomId: 'room-1',
+        seedHash: started.seedHash,
+        status: 'running',
+        calledNumbers: [4, 7, 8],
+        seq: 4,
+      },
+      seq: 4,
     });
     expect(session.store.getState().game?.seq).toBe(4);
     expect(session.store.getState().syncing['game:game-1']).toBe(false);

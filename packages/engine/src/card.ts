@@ -6,7 +6,7 @@ import {
   bingoCardSchema,
   type BingoCard,
 } from '@bingo/shared';
-import { seededRandom, shuffled } from './random.js';
+import { createRng, shuffled } from './rng.js';
 
 export type CardValidationResult =
   | { valid: true; card: BingoCard }
@@ -29,7 +29,7 @@ export function generateCard(roomSeed: string, cardNumber: number): BingoCard {
   if (!Number.isSafeInteger(cardNumber) || cardNumber <= 0) {
     throw new RangeError('cardNumber must be a positive safe integer');
   }
-  const random = seededRandom(JSON.stringify([roomSeed, cardNumber]));
+  const random = createRng(JSON.stringify([roomSeed, cardNumber]));
   const cells = Array<number>(CARD_SIZE * CARD_SIZE).fill(0);
   for (const [columnIndex, column] of BINGO_COLUMNS.entries()) {
     const [minimum, maximum] = COLUMN_RANGES[column];

@@ -21,6 +21,10 @@ query string. HMAC, signed user schema and timestamp checks execute server-side.
 Missing, tampered or expired credentials reject connection with `UNAUTHORIZED`.
 Never send `initData` in URL query parameters or logs. Phase 1 does not issue JWTs.
 Future session authentication implements the same inward-facing auth port.
+Telegram's signed launch data cannot be renewed by restoring SDK state. Once it
+expires, a reconnect requires reopening the Mini App to get a new launch, until
+the future JWT/session flow is implemented. A previously connected socket is
+not a durable or revocable session.
 
 ## Client → server intents
 

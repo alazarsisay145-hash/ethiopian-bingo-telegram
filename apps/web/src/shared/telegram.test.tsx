@@ -40,7 +40,9 @@ describe('Telegram environment gate', () => {
 
   it('fails closed if SDK restoration fails', async () => {
     const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    sdk.restore.mockImplementation(() => { throw new Error('unsupported context'); });
+    sdk.restore.mockImplementation(() => {
+      throw new Error('unsupported context');
+    });
     await expect(initializeTelegram()).resolves.toBeNull();
     consoleSpy.mockRestore();
   });

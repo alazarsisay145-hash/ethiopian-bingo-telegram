@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ErrorCode, errorDtoSchema } from '../errors.js';
+import { AppError, ErrorCode, errorDtoSchema } from '../errors.js';
 import {
   bingoCardSchema,
   claimResultSchema,
@@ -35,6 +35,15 @@ const error = {
 };
 
 describe('public model contracts', () => {
+  it('retains typed application error metadata', () => {
+    const failure = new AppError(ErrorCode.CONFLICT, 409, 'Conflict', { resource: 'card' });
+    expect(failure).toBeInstanceOf(Error);
+    expect(failure.name).toBe('AppError');
+    expect(failure.code).toBe(ErrorCode.CONFLICT);
+    expect(failure.httpStatus).toBe(409);
+    expect(failure.message).toBe('Conflict');
+    expect(failure.details).toEqual({ resource: 'card' });
+  });
   it('accepts valid profile, room, card, game and claim', () => {
     expect(
       userProfileSchema.safeParse({ id: 'user-1', telegramId: 123, firstName: 'Player' }).success,

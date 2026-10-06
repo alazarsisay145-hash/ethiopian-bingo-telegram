@@ -7,7 +7,7 @@ import type { Logger } from 'pino';
 import type {
   ApplicationEventHandlers, AuthenticationPort, ClientEvent,
   ClientPayload, EventContext, UserProfile,
-} from '../domain/ports.js';
+} from '../../domain/ports.js';
 import { mapError, validate } from '../http/errors.js';
 
 interface SocketData { user: UserProfile }

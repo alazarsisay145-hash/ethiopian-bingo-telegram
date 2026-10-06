@@ -3,8 +3,8 @@ import { io, type Socket } from 'socket.io-client';
 import { ErrorCode } from '@bingo/shared';
 import type { ErrorDto } from '@bingo/shared';
 import type { FastifyInstance } from 'fastify';
-import { buildApp, type BuildAppOptions } from '../app.js';
-import { signedInitData, testEnv } from '../test-support.js';
+import { buildApp, type BuildAppOptions } from '../../app.js';
+import { signedInitData, testEnv } from '../../test-support.js';
 
 let app: FastifyInstance | undefined;
 const clients: Socket[] = [];

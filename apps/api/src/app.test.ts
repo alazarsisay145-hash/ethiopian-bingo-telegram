@@ -3,7 +3,7 @@ import { AppError, ErrorCode } from '@bingo/shared';
 import { z } from 'zod';
 import { buildApp } from './app.js';
 import { testEnv } from './test-support.js';
-import { mapError, validate } from './http/errors.js';
+import { mapError, validate } from './interfaces/http/errors.js';
 
 describe('HTTP application', () => {
   it('builds without listening and reports healthy process but unconfigured dependencies', async () => {

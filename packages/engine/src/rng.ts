@@ -1,11 +1,7 @@
 import { createHash } from 'node:crypto';
 
-export function commitSeed(seed: string): string {
-  return createHash('sha256').update(seed, 'utf8').digest('hex');
-}
-
-export function verifySeed(seed: string, commitment: string): boolean {
-  return commitSeed(seed) === commitment;
+export function sha256Hex(input: string): string {
+  return createHash('sha256').update(input, 'utf8').digest('hex');
 }
 
 function mulberry32(seed: number): () => number {
@@ -18,7 +14,7 @@ function mulberry32(seed: number): () => number {
   };
 }
 
-export function seededRandom(seed: string): () => number {
+export function createRng(seed: string): () => number {
   const digest = createHash('sha256').update(seed, 'utf8').digest();
   return mulberry32(digest.readUInt32LE(0));
 }

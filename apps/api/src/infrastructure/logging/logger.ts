@@ -1,5 +1,5 @@
 import pino, { type DestinationStream, type Logger } from 'pino';
-import type { Env } from '../config/env.js';
+import type { Env } from '../../config/env.js';
 
 export function createLogger(env: Env, destination?: DestinationStream): Logger {
   return pino({
@@ -10,7 +10,10 @@ export function createLogger(env: Env, destination?: DestinationStream): Logger 
         'req.headers["x-telegram-init-data"]', 'req.body', 'req.query',
         'res.headers["set-cookie"]', 'botToken', 'BOT_TOKEN',
         'jwtSecret', 'JWT_SECRET', 'initData', '*.initData',
+        '*.botToken', '*.BOT_TOKEN', '*.jwtSecret', '*.JWT_SECRET',
         'databaseUrl', 'DATABASE_URL', 'redisUrl', 'REDIS_URL',
+        '*.databaseUrl', '*.DATABASE_URL', '*.redisUrl', '*.REDIS_URL',
+        'err', 'error', '*.err', '*.error', 'env',
       ],
       censor: '[REDACTED]',
     },

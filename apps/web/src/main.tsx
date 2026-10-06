@@ -10,7 +10,11 @@ if (!root) throw new Error('Application root is missing');
 createRoot(root).render(
   <ErrorBoundary>
     <TelegramGate>
-      {(telegram) => <AppProviders telegram={telegram}><AppRouter /></AppProviders>}
+      {(telegram) => (
+        <AppProviders telegram={telegram}>
+          <AppRouter />
+        </AppProviders>
+      )}
     </TelegramGate>
   </ErrorBoundary>,
 );

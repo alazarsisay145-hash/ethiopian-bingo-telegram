@@ -9,10 +9,10 @@ import type { Logger } from 'pino';
 import { parseEnv, type Env } from './config/env.js';
 import type { ApplicationEventHandlers, AuthenticationPort, DependencyProbes } from './domain/ports.js';
 import { assessReadiness } from './application/readiness.js';
-import { createLogger } from './infrastructure/logger.js';
-import { TelegramAuthentication } from './infrastructure/telegram.js';
-import { mapError } from './http/errors.js';
-import { attachSocketServer } from './realtime/socket.js';
+import { createLogger } from './infrastructure/logging/logger.js';
+import { TelegramAuthentication } from './infrastructure/telegram/initData.js';
+import { mapError } from './interfaces/http/errors.js';
+import { attachSocketServer } from './interfaces/ws/socket.js';
 
 export interface BuildAppOptions {
   env?: Env;

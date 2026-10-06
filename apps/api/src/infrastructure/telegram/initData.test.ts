@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { AppError } from '@bingo/shared';
-import { signedInitData, testBotToken } from '../test-support.js';
-import { TelegramAuthentication, verifyTelegramInitData } from './telegram.js';
+import { signedInitData, testBotToken } from '../../test-support.js';
+import { TelegramAuthentication, verifyTelegramInitData } from './initData.js';
 
 describe('Telegram initData verification', () => {
   it('authenticates actual HMAC signed data and derives a user profile', async () => {

@@ -10,7 +10,7 @@ let initialized = false;
 export async function initializeTelegram(): Promise<TelegramSession | null> {
   try {
     // Launch parameters can be cached outside Telegram; require a live bridge.
-    if (!await isTMA('complete', { timeout: 1500 })) return null;
+    if (!(await isTMA('complete', { timeout: 1500 }))) return null;
     if (!initialized) {
       init();
       initialized = true;
