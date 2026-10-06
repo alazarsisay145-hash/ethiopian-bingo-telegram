@@ -1,0 +1,9 @@
+packages:
+  - apps/*
+  - packages/*
+onlyBuiltDependencies:
+  - esbuild
+overrides:
+  # SDK-compatible security fixes; remove when upstream raises its minimums.
+  valibot: 1.4.2
+  tinypool: 2.1.2

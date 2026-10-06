@@ -1,24 +1,110 @@
 # Ethiopian Bingo — Telegram Mini App
 
-Production-ready, server-authoritative Ethiopian-style 5×5 Bingo delivered as a Telegram Mini App.
+Server-authoritative 5×5 Bingo foundation. Phase 1 provides real protocol contracts,
+deterministic game rules, Telegram handshake verification, and application shells.
+It does **not** run games, create users, reserve cards, issue JWTs, or maintain wallets.
+Unimplemented intents return an explicit error; there are no demo rooms or balances.
 
-## Status
+## Prerequisites and setup
 
-Phase 0 — repository initialized. Phase 1 (project foundation) is in progress.
+- Node 20 (`nvm use`), Corepack, pnpm 10.34.5.
+- Docker Compose v2 for optional local Postgres 16 / Redis 7.
+- A Telegram bot token and HTTPS Mini App URL for testing inside Telegram.
+
+```sh
+corepack enable
+pnpm install --frozen-lockfile
+cp .env.example .env
+# Fill BOT_TOKEN and a randomly generated JWT_SECRET (at least 32 characters).
+# For docker:dev, also set a local POSTGRES_PASSWORD.
+pnpm dev
+```
+
+Vite serves the web shell on port 5173; the API defaults to port 3001. The root
+`.env` is loaded for local development. Only `VITE_` variables enter the browser.
+Outside Telegram, the web app displays **Open this app inside Telegram**.
+The browser gate is UX, not authentication: only server HMAC verification establishes identity.
+Register your HTTPS web URL with BotFather, configure `CORS_ORIGINS` to its exact
+origin, and expose the API over HTTPS/WSS in production.
+
+```sh
+pnpm docker:dev
+curl http://127.0.0.1:3001/healthz
+curl -i http://127.0.0.1:3001/readyz
+```
+
+Readiness does not pretend a configured URL is a working connection. Database
+and Redis adapters belong to later phases; inject dependency probes when implementing them.
+
+## Scripts
+
+| Command              | Purpose                                              |
+| -------------------- | ---------------------------------------------------- |
+| `pnpm dev`           | Build shared packages, watch API, serve web          |
+| `pnpm lint`          | ESLint, including engine/layer boundary restrictions |
+| `pnpm typecheck`     | Strict TypeScript checks                             |
+| `pnpm test`          | All Vitest unit and transport integration tests      |
+| `pnpm test:coverage` | V8 coverage reports per tested package               |
+| `pnpm build`         | Dependency-ordered production builds                 |
+| `pnpm format`        | Prettier                                             |
+| `pnpm clean`         | Remove builds, coverage, Turbo caches                |
+| `pnpm docker:dev`    | Local Postgres and Redis, loopback ports only        |
+
+Tests use synthetic Telegram signatures, Fastify inject, and actual loopback
+Socket.IO connections, without needing a bot token, DB, or Redis.
+
+## Structure
+
+```text
+apps/api          config, domain ports, application services, infrastructure,
+                  HTTP/WS interfaces, composition root
+apps/web          Telegram-gated React shell, typed clients, server-fed store
+packages/shared   Zod schemas, DTOs, constants, errors, socket catalogue
+packages/engine   Deterministic card/draw generation and win verification
+packages/config   Strict TypeScript, ESLint and Prettier presets
+infra/docker      API multi-stage image and local dependency containers
+docs              Architecture, game rules, protocol
+```
+
+See [Architecture](docs/ARCHITECTURE.md), [Game rules](docs/GAME_RULES.md), and
+[Protocol](docs/PROTOCOL.md).
+
+## Production build
+
+Set public `VITE_API_BASE_URL` and `VITE_SOCKET_URL` before `pnpm build`; deploy
+`apps/web/dist` to a static HTTPS host. Never put credentials in these variables.
+
+```sh
+docker build -f infra/docker/Dockerfile.api -t bingo-api .
+docker run --rm --env-file .env -e NODE_ENV=production -e HOST=0.0.0.0 \
+  -p 3001:3001 bingo-api
+```
+
+The API image runs as a non-root user. Supply secrets at runtime, terminate TLS
+upstream, and preserve the default non-trusting proxy configuration unless
+trusted proxy boundaries are explicitly established.
+
+### Dependency security deviation
+
+The requested Fastify 4 and Vite 5 majors have no patches for current advisories.
+This foundation uses Fastify **5.12.5** and Vite **6.4.3**, the compatible patched
+replacements, while retaining Node 20, React 18, Socket.IO 4 and TypeScript 5.
+Review dependencies regularly; Node 20 and Telegram SDK ecosystem support must
+also be reevaluated before production deployment.
 
 ## Roadmap
 
-| Phase | Scope |
-|---|---|
-| 1 | Monorepo foundation: engine, shared types, API, web shell, tooling, tests |
-| 2 | Database schema (Prisma) + migrations |
-| 3 | Telegram authentication & profiles |
-| 4 | Rooms & lobby |
-| 5 | Server-authoritative game loop |
-| 6 | Wallet / ledger |
-| 7 | Mini App client screens |
-| 8 | Reconnection & resilience |
-| 9 | History & provable fairness |
-| 10 | Admin |
-| 11 | Anti-cheat hardening |
-| 12 | Production deployment |
+| Phase | Scope                                                                        |
+| ----- | ---------------------------------------------------------------------------- |
+| 1     | Foundation (this project): engine, shared contracts, API/web shells, tooling |
+| 2     | Postgres schema, repositories, migrations                                    |
+| 3     | Telegram auth sessions, JWTs, persistent profiles                            |
+| 4     | Rooms, membership, atomic card reservations                                  |
+| 5     | Single-owner game loop, claims, authoritative settlement                     |
+| 6     | Wallet, idempotent ledger, payment integration                               |
+| 7     | Lobby, card selection and game screens                                       |
+| 8     | Persisted reconnection replay, distributed ownership/failover                |
+| 9     | History and fairness verification                                            |
+| 10    | Admin authorization, audit and operations                                    |
+| 11    | Distributed rate limiting and anti-abuse hardening                           |
+| 12    | Production deployment, monitoring and runbooks                               |

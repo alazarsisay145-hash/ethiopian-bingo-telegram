@@ -1,0 +1,12 @@
+:root {
+  font-family: system-ui, sans-serif;
+  color: #17252a;
+  background: #f4f7f6;
+  color-scheme: light;
+}
+body { margin: 0; }
+main { max-width: 48rem; margin: auto; padding: 1.5rem; }
+nav { display: flex; flex-wrap: wrap; gap: 1.5rem; }
+a { color: #075c48; }
+a[aria-current="page"] { font-weight: 700; }
+section { margin-top: 2rem; }

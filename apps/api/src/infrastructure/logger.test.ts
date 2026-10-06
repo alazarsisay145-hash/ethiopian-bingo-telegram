@@ -1,0 +1,30 @@
+import { describe, expect, it } from 'vitest';
+import { testEnv } from '../test-support.js';
+import { createLogger } from './logger.js';
+
+describe('production logging', () => {
+  it('writes structured JSON while redacting credentials and request queries', () => {
+    const output: string[] = [];
+    const logger = createLogger({ ...testEnv, NODE_ENV: 'production', LOG_LEVEL: 'info' }, {
+      write: (value) => { output.push(value); },
+    });
+    logger.info({
+      req: {
+        method: 'GET', url: '/healthz?initData=private-telegram-data',
+        headers: { authorization: 'private-bearer', cookie: 'private-cookie' },
+      },
+      BOT_TOKEN: 'private-bot-token',
+      JWT_SECRET: 'private-jwt-secret',
+      DATABASE_URL: 'private-database-url',
+      REDIS_URL: 'private-redis-url',
+      initData: 'private-telegram-data',
+    }, 'Request logged');
+    const entry = output.join('');
+    expect(entry).not.toContain('private');
+    expect(JSON.parse(entry)).toMatchObject({
+      req: { method: 'GET', url: '/healthz' },
+      BOT_TOKEN: '[REDACTED]', JWT_SECRET: '[REDACTED]',
+      DATABASE_URL: '[REDACTED]', REDIS_URL: '[REDACTED]', initData: '[REDACTED]',
+    });
+  });
+});

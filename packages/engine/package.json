@@ -1,0 +1,34 @@
+{
+  "name": "@bingo/engine",
+  "version": "1.0.0",
+  "description": "Pure deterministic bingo engine",
+  "private": true,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "lint": "eslint src",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "clean": "rm -rf dist coverage"
+  },
+  "type": "module",
+  "dependencies": {
+    "@bingo/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@vitest/coverage-v8": "4.1.11",
+    "fast-check": "4.3.0",
+    "vitest": "4.1.11"
+  }
+}

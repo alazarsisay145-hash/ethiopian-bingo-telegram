@@ -1,0 +1,19 @@
+FROM node:20-bookworm-slim AS build
+ENV PNPM_HOME=/pnpm
+ENV PATH=$PNPM_HOME:$PATH
+RUN corepack enable && corepack prepare pnpm@10.34.5 --activate
+WORKDIR /workspace
+COPY . .
+RUN pnpm install --frozen-lockfile
+RUN pnpm --filter @bingo/api... build
+RUN pnpm --filter @bingo/api deploy --prod --legacy /out
+
+FROM node:20-bookworm-slim AS runtime
+ENV NODE_ENV=production
+ENV HOST=0.0.0.0
+ENV PORT=3001
+WORKDIR /app
+COPY --from=build --chown=node:node /out ./
+USER node
+EXPOSE 3001
+CMD ["node", "dist/main.js"]
