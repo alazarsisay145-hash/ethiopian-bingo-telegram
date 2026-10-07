@@ -9,6 +9,7 @@ import type { Logger } from 'pino';
 import { parseEnv, type Env } from './config/env.js';
 import type { ApplicationEventHandlers, AuthenticationPort, DependencyProbes } from './domain/ports.js';
 import { assessReadiness } from './application/readiness.js';
+import { createInfrastructure } from './infrastructure/bootstrap.js';
 import { createLogger } from './infrastructure/logging/logger.js';
 import { TelegramAuthentication } from './infrastructure/telegram/initData.js';
 import { mapError } from './interfaces/http/errors.js';
@@ -25,6 +26,7 @@ export interface BuildAppOptions {
 export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyInstance> {
   const env = options.env ?? parseEnv();
   const logger: FastifyBaseLogger = options.logger ?? createLogger(env);
+  const infrastructure = createInfrastructure(env, logger as Logger, options.probes);
   const app = Fastify({
     loggerInstance: logger,
     genReqId: () => randomUUID(),
@@ -51,7 +53,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   app.get('/readyz', { config: { rateLimit: false } }, async (_request, reply) => {
     const result = await assessReadiness(
       { database: Boolean(env.DATABASE_URL), redis: Boolean(env.REDIS_URL) },
-      options.probes ?? {},
+      infrastructure.probes,
     );
     return reply.code(result.ready ? 200 : 503).send({
       status: result.ready ? 'ready' : 'not_ready', dependencies: result.dependencies,
@@ -65,6 +67,9 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   });
   app.addHook('preClose', async () => {
     await new Promise<void>((resolve) => io.close(() => resolve()));
+  });
+  app.addHook('onClose', async () => {
+    await infrastructure.close();
   });
   await app.ready();
   return app;

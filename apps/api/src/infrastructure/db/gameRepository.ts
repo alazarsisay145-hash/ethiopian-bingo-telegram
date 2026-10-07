@@ -1,0 +1,130 @@
+import { z } from 'zod';
+import type { Game, GameStatus } from '../../domain/entities.js';
+import { GAME_STATUS_TRANSITIONS } from '../../domain/entities.js';
+import type { GameFence, GameRepository, RevealedSeed } from '../../domain/repositories.js';
+import type { Db } from './prisma.js';
+import { conflict, isForeignKeyViolation, isUuid, notFound, requireUuid } from './errors.js';
+
+const ACTIVE: GameStatus[] = ['LOBBY', 'STARTING', 'RUNNING', 'SETTLING'];
+// The secret seed is omitted from every query that returns a `Game`.
+const omitSecret = { seedEncrypted: true } as const;
+const commitmentSchema = z.object({
+  seedHash: z.string().min(1).max(256),
+  seedEncrypted: z.string().min(1).max(4096),
+});
+
+function sourcesOf(next: GameStatus): GameStatus[] {
+  return (Object.keys(GAME_STATUS_TRANSITIONS) as GameStatus[])
+    .filter((from) => GAME_STATUS_TRANSITIONS[from].includes(next));
+}
+
+export class PrismaGameRepository implements GameRepository {
+  constructor(private readonly db: Db) {}
+
+  async create(input: { roomId: string }): Promise<Game> {
+    requireUuid(input.roomId, 'roomId');
+    try {
+      return await this.db.game.create({ data: { roomId: input.roomId }, omit: omitSecret });
+    } catch (error) {
+      if (isForeignKeyViolation(error)) throw notFound('Room');
+      throw error;
+    }
+  }
+
+  async findById(id: string): Promise<Game | null> {
+    return isUuid(id) ? this.db.game.findUnique({ where: { id }, omit: omitSecret }) : null;
+  }
+
+  async findActiveByRoom(roomId: string): Promise<Game | null> {
+    if (!isUuid(roomId)) return null;
+    return this.db.game.findFirst({
+      where: { roomId, status: { in: ACTIVE } }, orderBy: { createdAt: 'desc' }, omit: omitSecret,
+    });
+  }
+
+  async updateStatus(gameId: string, status: GameStatus, fence?: GameFence): Promise<Game> {
+    requireUuid(gameId, 'gameId');
+    const now = new Date();
+    const result = await this.db.game.updateMany({
+      where: {
+        id: gameId,
+        status: { in: sourcesOf(status) },
+        ...(fence ? { ownerInstanceId: fence.instanceId, fencingToken: fence.fencingToken } : {}),
+      },
+      data: {
+        status,
+        ...(status === 'RUNNING' ? { startedAt: now } : {}),
+        ...(status === 'ENDED' || status === 'CANCELLED' ? { endedAt: now } : {}),
+      },
+    });
+    if (result.count === 0) {
+      const current = await this.db.game.findUnique({ where: { id: gameId }, omit: omitSecret });
+      if (!current) throw notFound('Game');
+      if (fence && !(await this.verifyFence(gameId, fence))) throw conflict('Stale game owner');
+      throw conflict(`Cannot move game from ${current.status} to ${status}`);
+    }
+    return this.db.game.findUniqueOrThrow({ where: { id: gameId }, omit: omitSecret });
+  }
+
+  async setSeedCommitment(
+    gameId: string,
+    input: { seedHash: string; seedEncrypted: string },
+  ): Promise<void> {
+    requireUuid(gameId, 'gameId');
+    const data = commitmentSchema.parse(input);
+    const result = await this.db.game.updateMany({
+      where: { id: gameId, seedHash: null, status: { in: ['LOBBY', 'STARTING'] } },
+      data,
+    });
+    if (result.count === 0) {
+      if (!(await this.db.game.count({ where: { id: gameId } }))) throw notFound('Game');
+      throw conflict('Seed commitment already set or game already started');
+    }
+  }
+
+  async revealSeed(gameId: string): Promise<RevealedSeed> {
+    requireUuid(gameId, 'gameId');
+    const game = await this.db.game.findUnique({ where: { id: gameId } });
+    if (!game) throw notFound('Game');
+    if (game.status !== 'ENDED' && game.status !== 'CANCELLED') {
+      throw conflict('Seed can only be revealed after the game has finished');
+    }
+    if (!game.seedHash || !game.seedEncrypted) throw conflict('Game has no seed commitment');
+    const revealedAt = game.seedRevealedAt ?? new Date();
+    if (!game.seedRevealedAt) {
+      await this.db.game.updateMany({
+        where: { id: gameId, seedRevealedAt: null }, data: { seedRevealedAt: revealedAt },
+      });
+    }
+    const fresh = await this.db.game.findUniqueOrThrow({
+      where: { id: gameId }, select: { seedRevealedAt: true },
+    });
+    return {
+      seedHash: game.seedHash,
+      seedEncrypted: game.seedEncrypted,
+      seedRevealedAt: fresh.seedRevealedAt ?? revealedAt,
+    };
+  }
+
+  async tryAcquireOwnership(
+    gameId: string,
+    instanceId: string,
+    fencingToken: bigint,
+  ): Promise<boolean> {
+    requireUuid(gameId, 'gameId');
+    if (!instanceId || fencingToken < 1n) throw conflict('Invalid ownership request');
+    const result = await this.db.game.updateMany({
+      where: { id: gameId, fencingToken: { lt: fencingToken } },
+      data: { ownerInstanceId: instanceId, fencingToken },
+    });
+    return result.count === 1;
+  }
+
+  async verifyFence(gameId: string, fence: GameFence): Promise<boolean> {
+    if (!isUuid(gameId)) return false;
+    const count = await this.db.game.count({
+      where: { id: gameId, ownerInstanceId: fence.instanceId, fencingToken: fence.fencingToken },
+    });
+    return count === 1;
+  }
+}

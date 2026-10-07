@@ -15,7 +15,12 @@ jobs:
           node-version: 20
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @bingo/api db:validate
+        env:
+          DATABASE_URL: postgresql://validate-only.invalid/bingo
+      - run: pnpm --filter @bingo/api db:generate
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm build
+      - run: pnpm --filter @bingo/api test:integration

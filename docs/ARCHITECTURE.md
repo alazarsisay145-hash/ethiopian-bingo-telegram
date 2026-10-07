@@ -45,15 +45,24 @@ alone does not confer implemented privileges. CORS limits browser access but is
 not an identity check. HTTP rate limiting is process-local; distributed limits,
 per-identity WS quotas and session revocation are later requirements.
 
-## Persistence and single-owner orchestration (later phases)
+## Persistence and single-owner orchestration
 
-Postgres is durable truth for users, card ownership, game events and ledger.
-Redis provides shared live snapshots, presence, pubsub, rate limits and ownership
-leases. No schema or migrations are included in this phase.
+**Implemented (backend foundation):** Prisma/Postgres schema and migration
+(`apps/api/prisma`), repository ports in `domain/repositories.ts`, Prisma adapters in
+`infrastructure/db`, a Redis `GameOwnershipLease` with fencing tokens in
+`infrastructure/redis`, and real Postgres/Redis readiness probes. Postgres is durable truth for
+users, card ownership, game events and the ledger; constraints, not application checks, enforce
+uniqueness, append-only history and non-negative balances. See [Data model](DATA_MODEL.md).
 
-Only one process advances a game. A Redis lease with heartbeat and fencing token
-must prevent stale owners from writing after lease loss. Persist each meaningful
-event with unique `(gameId, seq)` before publishing; transactions and idempotency
+**Still future:** nothing consumes these repositories yet. Sessions, the rooms service, the game
+orchestrator (which acquires the lease, passes the fencing token to Postgres and appends events
+before publishing), a transaction/unit-of-work composition of ledger + card reservation,
+reconnection replay, admin, UI, and deployment are later phases. Redis also remains to be used
+for live snapshots, presence, pubsub and rate limits.
+
+Only one process advances a game. The Redis lease (heartbeat + fencing token) selects the owner;
+writes carrying a stale fencing token are rejected by Postgres. Persist each meaningful event
+with unique `(gameId, seq)` before publishing; transactions and idempotency
 keys protect reservations and payouts. Recovery replays durable events. A Redis
 Socket.IO adapter and appropriate load-balancer routing are needed before
 horizontal scaling; attaching Socket.IO alone is not a distributed game lock.

@@ -2,18 +2,26 @@ FROM node:20-bookworm-slim AS build
 ENV PNPM_HOME=/pnpm
 ENV PATH=$PNPM_HOME:$PATH
 RUN corepack enable && corepack prepare pnpm@10.34.5 --activate
+# Prisma detects the OpenSSL version at generate time; match the runtime image.
+RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
 WORKDIR /workspace
 COPY . .
 RUN pnpm install --frozen-lockfile
 RUN pnpm --filter @bingo/api... build
 RUN pnpm --filter @bingo/api deploy --prod --legacy /out
+# The deployed tree needs its own generated Prisma client (and the CLI for `prisma migrate deploy`).
+RUN cd /out && pnpm exec prisma generate
 
 FROM node:20-bookworm-slim AS runtime
 ENV NODE_ENV=production
 ENV HOST=0.0.0.0
 ENV PORT=3001
+RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=build --chown=node:node /out ./
 USER node
 EXPOSE 3001
+# Apply migrations explicitly: docker run <image> node_modules/.bin/prisma migrate deploy
 CMD ["node", "dist/main.js"]

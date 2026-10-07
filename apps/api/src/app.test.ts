@@ -21,9 +21,9 @@ describe('HTTP application', () => {
       });
     } finally { await app.close(); }
   });
-  it('reports configured services unavailable without real adapters', async () => {
+  it('reports configured but unreachable services unavailable', async () => {
     const app = await buildApp({
-      env: { ...testEnv, DATABASE_URL: 'postgresql://localhost/bingo', REDIS_URL: 'redis://localhost' },
+      env: { ...testEnv, DATABASE_URL: 'postgresql://127.0.0.1:1/bingo', REDIS_URL: 'redis://127.0.0.1:1' },
     });
     try {
       const result = await app.inject('/readyz');

@@ -28,13 +28,18 @@ Register your HTTPS web URL with BotFather, configure `CORS_ORIGINS` to its exac
 origin, and expose the API over HTTPS/WSS in production.
 
 ```sh
-pnpm docker:dev
+pnpm docker:dev        # Postgres 16 + Redis 7 (needs POSTGRES_PASSWORD in .env)
+# Set DATABASE_URL and REDIS_URL in .env (see .env.example), then:
+pnpm db:migrate        # prisma migrate deploy: applies committed migrations
+pnpm dev
 curl http://127.0.0.1:3001/healthz
 curl -i http://127.0.0.1:3001/readyz
 ```
 
-Readiness does not pretend a configured URL is a working connection. Database
-and Redis adapters belong to later phases; inject dependency probes when implementing them.
+`/readyz` runs real probes (`SELECT 1` on Postgres, `PING` on Redis) for each configured
+URL: `available`, `unavailable`, or `not_configured`. Schema changes during development:
+`pnpm db:migrate:dev` (creates a migration), `pnpm db:studio` (browse data). See
+[Data model](docs/DATA_MODEL.md).
 
 ## Scripts
 
@@ -49,9 +54,17 @@ and Redis adapters belong to later phases; inject dependency probes when impleme
 | `pnpm format`        | Prettier                                             |
 | `pnpm clean`         | Remove builds, coverage, Turbo caches                |
 | `pnpm docker:dev`    | Local Postgres and Redis, loopback ports only        |
+| `pnpm db:migrate`    | Apply committed Prisma migrations (`migrate deploy`) |
+| `pnpm db:migrate:dev`| Create/apply a development migration                 |
+| `pnpm db:generate`   | Generate the Prisma client                           |
+| `pnpm db:studio`     | Prisma Studio                                        |
+| `pnpm test:integration` | Postgres/Redis Testcontainers suites (needs Docker) |
 
 Tests use synthetic Telegram signatures, Fastify inject, and actual loopback
-Socket.IO connections, without needing a bot token, DB, or Redis.
+Socket.IO connections, without needing a bot token, DB, or Redis. Repository, ledger, lease and
+probe tests live in `*.int.test.ts` and run with `pnpm --filter @bingo/api test:integration`
+against disposable Testcontainers (Docker required; they are skipped with a message if Docker
+is unavailable).
 
 ## Structure
 
@@ -66,7 +79,7 @@ infra/docker      API multi-stage image and local dependency containers
 docs              Architecture, game rules, protocol
 ```
 
-See [Architecture](docs/ARCHITECTURE.md), [Game rules](docs/GAME_RULES.md), and
+See [Architecture](docs/ARCHITECTURE.md), [Data model](docs/DATA_MODEL.md), [Game rules](docs/GAME_RULES.md), and
 [Protocol](docs/PROTOCOL.md).
 
 ## Production build
@@ -78,6 +91,8 @@ Set public `VITE_API_BASE_URL` and `VITE_SOCKET_URL` before `pnpm build`; deploy
 docker build -f infra/docker/Dockerfile.api -t bingo-api .
 docker run --rm --env-file .env -e NODE_ENV=production -e HOST=0.0.0.0 \
   -p 3001:3001 bingo-api
+# Apply migrations (one-off, same image):
+docker run --rm --env-file .env bingo-api node_modules/.bin/prisma migrate deploy
 ```
 
 The API image runs as a non-root user. Supply secrets at runtime, terminate TLS
@@ -97,7 +112,7 @@ also be reevaluated before production deployment.
 | Phase | Scope                                                                        |
 | ----- | ---------------------------------------------------------------------------- |
 | 1     | Foundation (this project): engine, shared contracts, API/web shells, tooling |
-| 2     | Postgres schema, repositories, migrations                                    |
+| 2     | Postgres schema, repositories, migrations, Redis lease (implemented, see docs/DATA_MODEL.md) |
 | 3     | Telegram auth sessions, JWTs, persistent profiles                            |
 | 4     | Rooms, membership, atomic card reservations                                  |
 | 5     | Single-owner game loop, claims, authoritative settlement                     |
