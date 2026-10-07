@@ -8,9 +8,10 @@ export function createLogger(env: Env, destination?: DestinationStream): Logger 
       paths: [
         'req.headers.authorization', 'req.headers.cookie',
         'req.headers["x-telegram-init-data"]', 'req.body', 'req.query',
-        'res.headers["set-cookie"]', 'botToken', 'BOT_TOKEN',
+        'res.headers["set-cookie"]', 'botToken', 'BOT_TOKEN', 'TELEGRAM_BOT_TOKEN',
         'jwtSecret', 'JWT_SECRET', 'initData', '*.initData',
-        '*.botToken', '*.BOT_TOKEN', '*.jwtSecret', '*.JWT_SECRET',
+        '*.botToken', '*.BOT_TOKEN', '*.TELEGRAM_BOT_TOKEN', '*.jwtSecret', '*.JWT_SECRET',
+        'SEED_ENCRYPTION_KEY', '*.SEED_ENCRYPTION_KEY',
         'databaseUrl', 'DATABASE_URL', 'redisUrl', 'REDIS_URL',
         '*.databaseUrl', '*.DATABASE_URL', '*.redisUrl', '*.REDIS_URL',
         'err', 'error', '*.err', '*.error', 'env',

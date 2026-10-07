@@ -51,6 +51,16 @@ async function createHarness(options: { stakeMinor?: bigint; balanceMinor?: bigi
 }
 
 describe('GameRoomService stake and membership transactions', () => {
+  it.each(['BANNED', 'SUSPENDED'] as const)('rejects a persisted %s user before reserving or debiting', async (status) => {
+    const { repositories, service, user, game } = await createHarness();
+    await repositories.users.setStatus(user.id, status);
+    await expect(service.joinGame({ gameId: game.id, userId: user.id, cardNumber: 1 }))
+      .rejects.toMatchObject({ code: ErrorCode.FORBIDDEN });
+    expect(await repositories.players.findByGameAndUser(game.id, user.id)).toBeNull();
+    expect((await repositories.games.findById(game.id))?.potMinor).toBe(0n);
+    expect(await repositories.ledger.getBalance(user.id)).toBe(100n);
+  });
+
   it('serializes simultaneous attempts for one card and debits exactly one stake', async () => {
     const { repositories, service, user, secondUser, game } = await createHarness();
     const outcomes = await Promise.allSettled([

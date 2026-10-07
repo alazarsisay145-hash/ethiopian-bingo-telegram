@@ -78,6 +78,12 @@ export async function createGameTestHarness(options: {
   });
   const context = (user: User | UserProfile = users[0]!): EventContext => ({
     user: { id: user.id, telegramId: Number(user.telegramId), firstName: user.firstName },
+    auth: {
+      userId: user.id, telegramId: Number(user.telegramId),
+      role: 'role' in user ? user.role : 'PLAYER',
+      status: 'status' in user ? user.status : 'ACTIVE',
+      authDate: Math.floor(clock.now().getTime() / 1000), verifiedAt: clock.now().getTime(),
+    },
     socketId: `socket:${user.id}`, requestId: `request:${user.id}`,
   });
   const join = async () => {

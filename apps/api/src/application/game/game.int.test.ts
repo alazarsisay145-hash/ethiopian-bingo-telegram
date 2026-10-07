@@ -160,6 +160,10 @@ function createHarness() {
 
   const context = (userId: string): EventContext => ({
     user: { id: userId, telegramId: 1, firstName: 'Integration' },
+    auth: {
+      userId, telegramId: 1, role: 'PLAYER', status: 'ACTIVE',
+      authDate: Math.floor(Date.now() / 1000), verifiedAt: Date.now(),
+    },
     socketId: `socket-${userId}`, requestId: randomUUID(),
   });
 

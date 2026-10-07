@@ -10,6 +10,20 @@ import type { RedisClient } from './redis/client.js';
 import { PostgresProbe } from './db/probe.js';
 import { createRedisClient } from './redis/client.js';
 import { RedisProbe } from './redis/probe.js';
+import type { UserRepository } from '../domain/repositories.js';
+import { TelegramAuthentication, type VerifiedIdentityHook } from './telegram/initData.js';
+
+export function createTelegramAuthentication(
+  env: Env,
+  users?: UserRepository,
+  onVerifiedIdentity?: VerifiedIdentityHook,
+): TelegramAuthentication {
+  return new TelegramAuthentication(env.TELEGRAM_BOT_TOKEN, {
+    maxAgeSeconds: env.TELEGRAM_INITDATA_MAX_AGE_SECONDS,
+    futureSkewSeconds: env.TELEGRAM_INITDATA_CLOCK_SKEW_SECONDS,
+    maxBytes: env.TELEGRAM_INITDATA_MAX_BYTES,
+  }, users, onVerifiedIdentity);
+}
 
 export interface Infrastructure {
   probes: DependencyProbes;

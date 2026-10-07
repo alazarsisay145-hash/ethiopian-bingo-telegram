@@ -9,7 +9,17 @@
 import type { WinPatternId } from '@bingo/shared';
 
 export type UserRole = 'PLAYER' | 'ADMIN' | 'SUPER_ADMIN';
-export type UserStatus = 'ACTIVE' | 'BANNED';
+export type UserStatus = 'ACTIVE' | 'SUSPENDED' | 'BANNED';
+
+/** Server-derived identity. authDate is Unix seconds; verifiedAt is Unix milliseconds. */
+export interface AuthContext {
+  userId: string;
+  telegramId: number;
+  role: UserRole;
+  status: UserStatus;
+  authDate: number;
+  verifiedAt: number;
+}
 export type LedgerEntryType = 'STAKE' | 'REFUND' | 'PRIZE' | 'ADMIN_ADJUSTMENT';
 export type RoomStatus = 'OPEN' | 'CLOSED';
 export type GameStatus = 'LOBBY' | 'STARTING' | 'RUNNING' | 'SETTLING' | 'ENDED' | 'CANCELLED';

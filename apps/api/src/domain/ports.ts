@@ -1,13 +1,14 @@
 import type { z } from 'zod';
 import type { clientPayloadSchemas, userProfileSchema } from '@bingo/shared';
 import type { TransactionRepositories } from './repositories.js';
+import type { AuthContext } from './entities.js';
 
 export type UserProfile = z.infer<typeof userProfileSchema>;
 export type ClientEvent = keyof typeof clientPayloadSchemas;
 export type ClientPayload<E extends ClientEvent> = z.infer<(typeof clientPayloadSchemas)[E]>;
 
 export interface AuthenticationPort {
-  authenticate(initData: string): Promise<UserProfile>;
+  authenticate(initData: string): Promise<UserProfile & AuthContext>;
 }
 
 export interface DependencyProbe {
@@ -55,6 +56,7 @@ export interface RateLimiter {
 
 export interface EventContext {
   user: UserProfile;
+  auth: AuthContext;
   socketId: string;
   requestId: string;
   joinRoom?(room: string): Promise<void>;

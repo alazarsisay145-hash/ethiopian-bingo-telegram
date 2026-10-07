@@ -25,7 +25,7 @@ import { GameRoomService } from './application/rooms/gameRoomService.js';
 import { LobbyScheduler } from './application/rooms/lobbyScheduler.js';
 import { assessReadiness } from './application/readiness.js';
 import { AesGcmSeedVault, NodeSecretSource } from './infrastructure/crypto/seedVault.js';
-import { createInfrastructure } from './infrastructure/bootstrap.js';
+import { createInfrastructure, createTelegramAuthentication } from './infrastructure/bootstrap.js';
 import {
   RepositoryGameFenceProvider,
   RepositoryGameMembership,
@@ -35,7 +35,6 @@ import { RedisGameLock } from './infrastructure/redis/gameLock.js';
 import { RedisGameOwnershipLease } from './infrastructure/redis/gameOwnershipLease.js';
 import { RedisRateLimiter } from './infrastructure/redis/rateLimiter.js';
 import { SystemClock, SystemScheduler } from './infrastructure/time/systemScheduler.js';
-import { TelegramAuthentication } from './infrastructure/telegram/initData.js';
 import { SocketIoGameEventPublisher } from './infrastructure/ws/socketIoGameEventPublisher.js';
 import { mapError } from './interfaces/http/errors.js';
 import { registerHttpRoutes } from './interfaces/http/routes.js';
@@ -47,6 +46,7 @@ export interface BuildAppOptions {
   probes?: DependencyProbes;
   authentication?: AuthenticationPort;
   authorizeUser?: (userId: string) => Promise<void>;
+  restoreRooms?: (userId: string) => Promise<string[]>;
   rateLimiter?: RateLimiter;
   eventHandlers?: ApplicationEventHandlers | ((io: BingoSocketServer) => ApplicationEventHandlers);
 }
@@ -57,15 +57,34 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   const infrastructure = createInfrastructure(env, logger as Logger, options.probes);
   const repositories = infrastructure.repositories;
   const redis = infrastructure.redis;
+  const sharedRateLimiter =
+    options.rateLimiter ?? (redis ? new RedisRateLimiter(redis) : undefined);
   const authentication =
-    options.authentication ?? new TelegramAuthentication(env.BOT_TOKEN, {}, repositories?.users);
+    options.authentication ??
+    createTelegramAuthentication(
+      env,
+      repositories?.users,
+      sharedRateLimiter
+        ? async (telegramId) => {
+            if (
+              !(await sharedRateLimiter.consume(
+                `auth:telegram:${telegramId}`,
+                env.HTTP_RATE_LIMIT_MAX,
+                env.HTTP_RATE_LIMIT_WINDOW_MS,
+              ))
+            ) {
+              throw new AppError(ErrorCode.RATE_LIMITED, 429, 'Too many requests');
+            }
+          }
+        : undefined,
+    );
   const gameRuntime =
     repositories && redis && infrastructure.unitOfWork && env.SEED_ENCRYPTION_KEY
       ? (() => {
           const clock = new SystemClock();
           const scheduler = new SystemScheduler();
           const ownership = new RedisGameOwnershipLease(redis);
-          const rateLimiter = options.rateLimiter ?? new RedisRateLimiter(redis);
+          const rateLimiter = sharedRateLimiter!;
           const lock = new RedisGameLock(redis, clock, scheduler);
           const vault = new AesGcmSeedVault(env.SEED_ENCRYPTION_KEY);
           const instanceId = randomUUID();
@@ -222,12 +241,8 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     genReqId: () => randomUUID(),
     bodyLimit: 16 * 1024,
     requestTimeout: 30_000,
+    http: { maxHeaderSize: Math.max(16_384, env.TELEGRAM_INITDATA_MAX_BYTES + 8192) },
   });
-  if (gameRuntime) {
-    app.decorate('gameLifecycleService', gameRuntime.lifecycle);
-    app.decorate('gameRunner', gameRuntime.runner);
-    registerHttpRoutes(app, gameRuntime.httpDependencies);
-  }
   await app.register(helmet);
   await app.register(cors, { origin: env.CORS_ORIGINS, credentials: false });
   await app.register(sensible);
@@ -238,8 +253,9 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   app.addHook('onRequest', async (request, reply) => {
     reply.header('x-request-id', request.id);
     if (
-      gameRuntime?.rateLimiter &&
-      !(await gameRuntime.rateLimiter.consume(
+      !['/healthz', '/readyz'].includes(request.url.split('?')[0]!) &&
+      sharedRateLimiter &&
+      !(await sharedRateLimiter.consume(
         `http:ip:${request.ip}`,
         env.HTTP_RATE_LIMIT_MAX,
         env.HTTP_RATE_LIMIT_WINDOW_MS,
@@ -257,6 +273,11 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     const mapped = mapError(new AppError(ErrorCode.NOT_FOUND, 404, 'Route not found'), request.id);
     void reply.code(mapped.status).send(mapped.body);
   });
+  if (gameRuntime) {
+    app.decorate('gameLifecycleService', gameRuntime.lifecycle);
+    app.decorate('gameRunner', gameRuntime.runner);
+    registerHttpRoutes(app, gameRuntime.httpDependencies);
+  }
   app.get('/healthz', { config: { rateLimit: false } }, () => ({ status: 'ok' }));
   app.get('/readyz', { config: { rateLimit: false } }, async (_request, reply) => {
     const result = await assessReadiness(
@@ -278,24 +299,49 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     },
     origins: env.CORS_ORIGINS,
     logger: app.log,
-    ...(gameRuntime ? {
-      rateLimiter: options.rateLimiter ?? gameRuntime.rateLimiter,
-      rateLimitWindowMs: env.WS_RATE_LIMIT_WINDOW_MS,
-    } : {}),
-    ...(options.rateLimiter && !gameRuntime
-      ? { rateLimiter: options.rateLimiter, rateLimitWindowMs: env.WS_RATE_LIMIT_WINDOW_MS }
+    authRateLimitMax: env.HTTP_RATE_LIMIT_MAX,
+    authRateLimitWindowMs: env.HTTP_RATE_LIMIT_WINDOW_MS,
+    initDataMaxBytes: env.TELEGRAM_INITDATA_MAX_BYTES,
+    ...(options.restoreRooms ? { restoreRooms: options.restoreRooms } : {}),
+    ...(gameRuntime
+      ? {
+          rateLimiter: options.rateLimiter ?? gameRuntime.rateLimiter,
+          rateLimitWindowMs: env.WS_RATE_LIMIT_WINDOW_MS,
+        }
+      : {}),
+    ...(sharedRateLimiter && !gameRuntime
+      ? { rateLimiter: sharedRateLimiter, rateLimitWindowMs: env.WS_RATE_LIMIT_WINDOW_MS }
       : {}),
     ...(options.authorizeUser || repositories
       ? {
-          authorizeUser: options.authorizeUser ?? (async (userId: string) => {
-            const user = await repositories!.users.findById(userId);
-            if (!user || user.status === 'BANNED') {
-              throw new AppError(ErrorCode.FORBIDDEN, 403, 'User is banned or unavailable');
-            }
-          }),
+          authorizeUser:
+            options.authorizeUser ??
+            (async (userId: string) => {
+              const user = await repositories!.users.findById(userId);
+              if (!user || user.status !== 'ACTIVE') {
+                throw new AppError(ErrorCode.FORBIDDEN, 403, 'User is banned or unavailable');
+              }
+            }),
           ...(repositories
-            ? { restoreRooms: async (userId: string) =>
-                (await repositories.gamePlayers.listByUser(userId)).map(({ gameId }) => `game:${gameId}`) }
+            ? {
+                restoreRooms: async (userId: string) => {
+                  const memberships = await repositories.gamePlayers.listByUser(userId, [
+                    'LOBBY',
+                    'STARTING',
+                    'RUNNING',
+                    'SETTLING',
+                  ]);
+                  const rooms = await Promise.all(
+                    memberships.map(async ({ gameId }) => {
+                      const game = await repositories.games.findById(gameId);
+                      return game ? [`game:${gameId}`, `room:${game.roomId}`] : [];
+                    }),
+                  );
+                  return options.restoreRooms
+                    ? options.restoreRooms(userId)
+                    : [...new Set(rooms.flat())];
+                },
+              }
             : {}),
         }
       : {}),

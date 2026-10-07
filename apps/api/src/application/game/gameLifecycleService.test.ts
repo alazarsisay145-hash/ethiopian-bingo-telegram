@@ -69,9 +69,9 @@ describe('GameLifecycleService with transactional repositories', () => {
     expect(await h.repositories.players.listByGame(h.game.id)).toEqual([]);
   });
 
-  it('rejects banned/nonexistent users and closed rooms without reserving cards', async () => {
+  it.each(['BANNED', 'SUSPENDED'] as const)('rejects %s/nonexistent users and closed rooms without reserving cards', async (status) => {
     const h = await createGameTestHarness();
-    await h.repositories.users.setStatus(h.users[0]!.id, 'BANNED');
+    await h.repositories.users.setStatus(h.users[0]!.id, status);
     await expect(h.lifecycle.joinGame({ gameId: h.game.id, userId: h.users[0]!.id, cardNumber: 1 }))
       .rejects.toMatchObject({ code: ErrorCode.FORBIDDEN });
     await expect(h.lifecycle.joinGame({ gameId: h.game.id, userId: crypto.randomUUID(), cardNumber: 1 }))

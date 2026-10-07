@@ -34,12 +34,96 @@ const otherCard: GamePlayer = {
   cardCells: generateCard('test-pool', 2).cells,
 };
 const context: EventContext = {
-  user: { id: ownCard.userId, telegramId: 123, firstName: 'Player' },
+  user: { id: 'legacy-profile-is-not-authority', telegramId: 123, firstName: 'Player' },
+  auth: {
+    userId: ownCard.userId,
+    telegramId: 123,
+    role: 'PLAYER',
+    status: 'ACTIVE',
+    authDate: 1,
+    verifiedAt: 1000,
+  },
   socketId: 'socket-1',
   requestId: 'request-1',
 };
 
 describe('GameEventHandlers', () => {
+  it('derives claims only from the canonical auth context, never the profile id', async () => {
+    const claim = vi.fn(async () => ({
+      gameId: game.id,
+      userId: context.auth.userId,
+      accepted: false,
+      patterns: [],
+      seq: 3,
+    }));
+    const isMember = vi.fn(async () => true);
+    const handlers = createGameEventHandlers({
+      games: {} as never,
+      players: { listByGame: async () => [] } as never,
+      events: {} as never,
+      claims: { claim } as never,
+      projector: {} as never,
+      membership: { isMember },
+      fences: { current: async () => ({ instanceId: 'runner', fencingToken: 1n }) },
+      publisher: { publishUser: vi.fn() },
+      gameRooms: {} as never,
+    });
+    await handlers['game:claim']?.({ gameId: game.id }, context);
+    expect(isMember).toHaveBeenCalledWith(game.id, context.auth.userId);
+    expect(claim).toHaveBeenCalledWith(
+      { gameId: game.id, userId: context.auth.userId, requestId: context.requestId },
+      { instanceId: 'runner', fencingToken: 1n },
+    );
+  });
+  it('does not subscribe a room spectator to private game facts', async () => {
+    const joinRoom = vi.fn(async () => undefined);
+    const handlers = createGameEventHandlers({
+      games: {} as never,
+      players: {} as never,
+      events: {} as never,
+      claims: {} as never,
+      projector: {} as never,
+      membership: { isMember: async () => false },
+      fences: {} as never,
+      publisher: { publishUser: vi.fn() },
+      gameRooms: {
+        getOrCreateWaitingGame: async () => game,
+        publishRoomState: async () => undefined,
+      } as never,
+    });
+    await handlers['room:join']?.({ roomId: game.roomId }, { ...context, joinRoom });
+    expect(joinRoom).toHaveBeenCalledWith(`room:${game.roomId}`);
+    expect(joinRoom).not.toHaveBeenCalledWith(`game:${game.id}`);
+    await expect(handlers['game:ready']?.({ roomId: game.roomId }, context)).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+  });
+
+  it('checks persisted membership before restoring channels on resync', async () => {
+    const joinRoom = vi.fn(async () => undefined);
+    const listByUser = vi.fn(async () => [{ gameId: game.id }]);
+    const handlers = createGameEventHandlers({
+      games: {} as never,
+      players: { listByUser } as never,
+      events: {} as never,
+      claims: {} as never,
+      projector: {} as never,
+      membership: { isMember: async () => false },
+      fences: {} as never,
+      publisher: { publishUser: vi.fn() },
+      gameRooms: {} as never,
+    });
+    await expect(
+      handlers['state:resync']?.({ lastSeq: 0 }, { ...context, joinRoom }),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(listByUser).toHaveBeenCalledWith(context.auth.userId, [
+      'LOBBY',
+      'STARTING',
+      'RUNNING',
+      'SETTLING',
+    ]);
+    expect(joinRoom).not.toHaveBeenCalled();
+  });
   it('resyncs only the authenticated player card and never serializes the hidden seed', async () => {
     const messages: Array<[string, string, unknown]> = [];
     const publishUser = vi.fn(async (userId: string, event: string, payload: unknown) => {
