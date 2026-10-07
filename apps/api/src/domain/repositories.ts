@@ -14,6 +14,17 @@ export interface GameFence {
   fencingToken: bigint;
 }
 
+export interface TransactionRepositories {
+  users: UserRepository;
+  rooms: RoomRepository;
+  games: GameRepository;
+  gamePlayers: GamePlayerRepository;
+  gameEvents: GameEventRepository;
+  claims: ClaimRepository;
+  ledger: LedgerRepository;
+  auditLogs: AuditLogRepository;
+}
+
 export interface TelegramProfileInput {
   telegramId: bigint;
   username?: string | null;
@@ -31,6 +42,8 @@ export interface UserRepository {
   setRole(id: string, role: UserRole): Promise<User>;
   setStatus(id: string, status: UserStatus): Promise<User>;
   touchLastSeen(id: string, at?: Date): Promise<void>;
+  findManyByIds(ids: string[]): Promise<User[]>;
+  lockForUpdate(id: string): Promise<User | null>;
 }
 
 export interface CreateRoomInput {
@@ -41,6 +54,7 @@ export interface CreateRoomInput {
   drawIntervalMs: number;
   activePatterns: WinPatternId[];
   cardPoolSize: number;
+  startCountdownMs?: number;
   /** Server secret; never exposed through any DTO. */
   cardPoolSeed: string;
   createdById?: string | null;
@@ -70,6 +84,10 @@ export interface GameRepository {
   findById(id: string): Promise<Game | null>;
   /** Latest non-terminal (LOBBY/STARTING/RUNNING/SETTLING) game of the room. */
   findActiveByRoom(roomId: string): Promise<Game | null>;
+  listByStatus(statuses: GameStatus[]): Promise<Game[]>;
+  lockForUpdate(gameId: string): Promise<Game | null>;
+  adjustPotMinor(gameId: string, deltaMinor: bigint): Promise<Game>;
+  setStartingAt(gameId: string, startingAt: Date | null): Promise<Game | null>;
   listRunnable(): Promise<Game[]>;
   /** Validates the transition atomically; stale fences throw `CONFLICT`. */
   updateStatus(gameId: string, status: GameStatus, fence?: GameFence): Promise<Game>;
@@ -106,6 +124,7 @@ export interface GamePlayerRepository {
     cardCells: number[];
   }): Promise<ReserveCardResult>;
   listByGame(gameId: string): Promise<GamePlayer[]>;
+  listByUser(userId: string, statuses?: GameStatus[]): Promise<GamePlayer[]>;
   findByGameAndUser(gameId: string, userId: string): Promise<GamePlayer | null>;
   remove(gameId: string, userId: string): Promise<void>;
   setStatus(gameId: string, userId: string, status: GamePlayerStatus, fence?: GameFence): Promise<GamePlayer>;

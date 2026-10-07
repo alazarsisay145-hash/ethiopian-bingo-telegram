@@ -11,6 +11,7 @@ const roomFields = {
   minPlayers: z.number().int().min(1),
   maxPlayers: z.number().int().min(1),
   drawIntervalMs: z.number().int().positive(),
+  startCountdownMs: z.number().int().min(1000).max(60000).default(15000),
   activePatterns: z.array(patternIdSchema).min(1),
   cardPoolSize: z.number().int().positive(),
 };

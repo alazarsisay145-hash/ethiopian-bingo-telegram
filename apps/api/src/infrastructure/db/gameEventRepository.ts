@@ -7,7 +7,7 @@ import { conflict, isUuid, notFound, requireUuid } from './errors.js';
 const MAX_PAGE = 1000;
 
 export class PrismaGameEventRepository implements GameEventRepository {
-  constructor(private readonly db: Db) {}
+  constructor(private readonly db: Db, private readonly transactional = false) {}
 
   /**
    * The `UPDATE games ... RETURNING current_seq` takes the game row lock, so concurrent
@@ -29,7 +29,7 @@ export class PrismaGameEventRepository implements GameEventRepository {
     if (input.payload === undefined) throw conflict('Event payload is required');
     const payload =
       input.payload === null ? Prisma.JsonNull : (input.payload as Prisma.InputJsonValue);
-    return this.db.$transaction(async (tx) => {
+    const execute = async (tx: Prisma.TransactionClient): Promise<GameEvent> => {
       const rows = fence
         ? await tx.$queryRaw<{ seq: number }[]>`
             UPDATE games SET current_seq = current_seq + 1, updated_at = now()
@@ -54,7 +54,8 @@ export class PrismaGameEventRepository implements GameEventRepository {
         }
       }
       return tx.gameEvent.create({ data: { gameId, seq, type, payload } });
-    });
+    };
+    return this.transactional ? execute(this.db) : this.db.$transaction(execute);
   }
 
   async listSince(gameId: string, afterSeq: number, limit: number): Promise<GameEvent[]> {

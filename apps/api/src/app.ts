@@ -20,6 +20,8 @@ import { GameLifecycleService } from './application/game/gameLifecycleService.js
 import { GameRunner } from './application/game/gameRunner.js';
 import { GameSettlementService } from './application/game/gameSettlementService.js';
 import { GameStateProjector } from './application/game/gameStateProjector.js';
+import { GameRoomService } from './application/rooms/gameRoomService.js';
+import { LobbyScheduler } from './application/rooms/lobbyScheduler.js';
 import { assessReadiness } from './application/readiness.js';
 import { AesGcmSeedVault, NodeSecretSource } from './infrastructure/crypto/seedVault.js';
 import { createInfrastructure } from './infrastructure/bootstrap.js';
@@ -30,10 +32,12 @@ import {
 import { createLogger } from './infrastructure/logging/logger.js';
 import { RedisGameLock } from './infrastructure/redis/gameLock.js';
 import { RedisGameOwnershipLease } from './infrastructure/redis/gameOwnershipLease.js';
+import { RedisRateLimiter } from './infrastructure/redis/rateLimiter.js';
 import { SystemClock, SystemScheduler } from './infrastructure/time/systemScheduler.js';
 import { TelegramAuthentication } from './infrastructure/telegram/initData.js';
 import { SocketIoGameEventPublisher } from './infrastructure/ws/socketIoGameEventPublisher.js';
 import { mapError } from './interfaces/http/errors.js';
+import { registerHttpRoutes } from './interfaces/http/routes.js';
 import { attachSocketServer, type BingoSocketServer } from './interfaces/ws/socket.js';
 
 export interface BuildAppOptions {
@@ -50,20 +54,29 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   const infrastructure = createInfrastructure(env, logger as Logger, options.probes);
   const repositories = infrastructure.repositories;
   const redis = infrastructure.redis;
+  const authentication =
+    options.authentication ?? new TelegramAuthentication(env.BOT_TOKEN, {}, repositories?.users);
   const gameRuntime =
-    repositories && redis && env.SEED_ENCRYPTION_KEY
+    repositories && redis && infrastructure.unitOfWork && env.SEED_ENCRYPTION_KEY
       ? (() => {
           const clock = new SystemClock();
           const scheduler = new SystemScheduler();
           const ownership = new RedisGameOwnershipLease(redis);
+          const rateLimiter = new RedisRateLimiter(redis);
           const lock = new RedisGameLock(redis, clock, scheduler);
           const vault = new AesGcmSeedVault(env.SEED_ENCRYPTION_KEY);
+          const instanceId = randomUUID();
           let publisher: SocketIoGameEventPublisher | undefined;
           const eventPublisher: GameEventPublisher = {
             publishUser: (userId, event, payload) => {
               if (!publisher)
                 throw new AppError(ErrorCode.INTERNAL, 500, 'Game publisher is unavailable');
               return publisher.publishUser(userId, event, payload);
+            },
+            publishRoom: (roomId, event, payload) => {
+              if (!publisher)
+                throw new AppError(ErrorCode.INTERNAL, 500, 'Game publisher is unavailable');
+              return publisher.publishRoom(roomId, event, payload);
             },
           };
           const settlement = new GameSettlementService(
@@ -121,9 +134,55 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
             lock,
             eventPublisher,
           );
+          const gameRooms = new GameRoomService(
+            repositories.rooms,
+            repositories.games,
+            repositories.gamePlayers,
+            repositories.users,
+            repositories.gameEvents,
+            repositories.auditLogs,
+            infrastructure.unitOfWork,
+            lifecycle,
+            eventPublisher,
+            env.MAX_ACTIVE_GAMES_PER_USER,
+          );
+          const lobby = new LobbyScheduler(
+            instanceId,
+            repositories.games,
+            repositories.rooms,
+            repositories.gamePlayers,
+            ownership,
+            lifecycle,
+            runner,
+            eventPublisher,
+            clock,
+            scheduler,
+            repositories.auditLogs,
+          );
           return {
             runner,
+            lobby,
             lifecycle,
+            gameRooms,
+            claims,
+            ownership,
+            vault,
+            instanceId,
+            httpDependencies: {
+              env,
+              repositories,
+              authentication,
+              gameRooms,
+              lifecycle,
+              claims,
+              runner,
+              ownership,
+              vault,
+              publisher: eventPublisher,
+              instanceId,
+              rateLimiter,
+            },
+            rateLimiter,
             handlers: (io: BingoSocketServer) => {
               publisher = new SocketIoGameEventPublisher(io, redis.duplicate(), redis.duplicate());
               return createGameEventHandlers({
@@ -135,9 +194,11 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
                 membership: new RepositoryGameMembership(repositories.gamePlayers),
                 fences: new RepositoryGameFenceProvider(repositories.games),
                 publisher: eventPublisher,
+                gameRooms,
               });
             },
             close: async () => {
+              lobby.stop();
               await runner.stopAll();
               await publisher?.close();
             },
@@ -153,11 +214,15 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   if (gameRuntime) {
     app.decorate('gameLifecycleService', gameRuntime.lifecycle);
     app.decorate('gameRunner', gameRuntime.runner);
+    registerHttpRoutes(app, gameRuntime.httpDependencies);
   }
   await app.register(helmet);
   await app.register(cors, { origin: env.CORS_ORIGINS, credentials: false });
   await app.register(sensible);
-  await app.register(rateLimit, { max: 100, timeWindow: '1 minute' });
+  await app.register(rateLimit, {
+    max: env.HTTP_RATE_LIMIT_MAX,
+    timeWindow: env.HTTP_RATE_LIMIT_WINDOW_MS,
+  });
   app.addHook('onRequest', async (request, reply) => {
     reply.header('x-request-id', request.id);
   });
@@ -182,8 +247,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     });
   });
   const io = attachSocketServer(app.server, {
-    authentication:
-      options.authentication ?? new TelegramAuthentication(env.BOT_TOKEN, {}, repositories?.users),
+    authentication,
     handlers: (socketServer) => {
       const gameHandlers = gameRuntime?.handlers(socketServer);
       return typeof options.eventHandlers === 'function'
@@ -192,8 +256,19 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     },
     origins: env.CORS_ORIGINS,
     logger: app.log,
+    ...(gameRuntime ? {
+      rateLimiter: gameRuntime.rateLimiter,
+      rateLimitWindowMs: env.WS_RATE_LIMIT_WINDOW_MS,
+    } : {}),
+    ...(repositories
+      ? {
+          restoreRooms: async (userId: string) =>
+            (await repositories.gamePlayers.listByUser(userId)).map(({ gameId }) => `game:${gameId}`),
+        }
+      : {}),
   });
   app.addHook('preClose', async () => {
+    gameRuntime?.lobby.stop();
     await gameRuntime?.runner.stopAll();
     await new Promise<void>((resolve) => io.close(() => resolve()));
   });
@@ -207,6 +282,10 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       app.log.error('Game runner recovery failed');
     });
     gameRuntime.runner.startRecovery(5_000);
+    await gameRuntime.lobby.recover().catch(() => {
+      app.log.error('Lobby recovery failed');
+    });
+    gameRuntime.lobby.start();
   }
   return app;
 }

@@ -23,18 +23,23 @@ export interface Repositories {
   auditLogs: AuditLogRepository;
 }
 
-export function createRepositories(db: Db): Repositories {
+export function createRepositories(
+  db: Db,
+  transactional = false,
+  adminTelegramIds: readonly number[] = [],
+): Repositories {
   return {
-    users: new PrismaUserRepository(db),
+    users: new PrismaUserRepository(db, adminTelegramIds),
     rooms: new PrismaRoomRepository(db),
     games: new PrismaGameRepository(db),
     gamePlayers: new PrismaGamePlayerRepository(db),
-    gameEvents: new PrismaGameEventRepository(db),
+    gameEvents: new PrismaGameEventRepository(db, transactional),
     claims: new PrismaClaimRepository(db),
-    ledger: new PrismaLedgerRepository(db),
+    ledger: new PrismaLedgerRepository(db, transactional),
     auditLogs: new PrismaAuditLogRepository(db),
   };
 }
 
 export { createPrismaClient, type Db } from './prisma.js';
 export { PostgresProbe } from './probe.js';
+export { PrismaUnitOfWork } from './unitOfWork.js';

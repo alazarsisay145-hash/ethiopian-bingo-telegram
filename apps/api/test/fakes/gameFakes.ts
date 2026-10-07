@@ -2,6 +2,7 @@ import { AppError, ErrorCode } from '@bingo/shared';
 import type {
   Clock,
   GameLock,
+  RateLimiter,
   Scheduler,
   SecretSource,
   SeedVault,
@@ -26,6 +27,23 @@ export class InMemoryGameLock implements GameLock {
       release();
       if (this.tails.get(key) === tail) this.tails.delete(key);
     }
+  }
+}
+
+export class InMemoryRateLimiter implements RateLimiter {
+  private readonly windows = new Map<string, { count: number; expiresAt: number }>();
+
+  constructor(private readonly clock: Clock = { now: () => new Date() }) {}
+
+  async consume(key: string, max: number, windowMs: number): Promise<boolean> {
+    const now = this.clock.now().getTime();
+    const current = this.windows.get(key);
+    const window = !current || current.expiresAt <= now
+      ? { count: 0, expiresAt: now + windowMs }
+      : current;
+    window.count += 1;
+    this.windows.set(key, window);
+    return window.count <= max;
   }
 }
 

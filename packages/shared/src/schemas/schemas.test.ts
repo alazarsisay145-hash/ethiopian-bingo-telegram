@@ -8,6 +8,11 @@ import {
   userProfileSchema,
 } from './models.js';
 import { clientPayloadSchemas, serverPayloadSchemas } from './socket.js';
+import {
+  createRoomBodySchema,
+  gameParamsSchema,
+  joinGameBodySchema,
+} from './http.js';
 
 const card = {
   cardNumber: 1,
@@ -95,6 +100,27 @@ describe('public model contracts', () => {
       }).success,
     ).toBe(false);
   });
+  it('validates strict HTTP parameters, joins, and room configuration', () => {
+    const id = '8cc0a286-5246-4e6f-8cf9-44ce57b8ec1c';
+    expect(gameParamsSchema.safeParse({ gameId: id }).success).toBe(true);
+    expect(gameParamsSchema.safeParse({ gameId: 'not-a-uuid' }).success).toBe(false);
+    expect(gameParamsSchema.safeParse({ gameId: id, userId: 'forged' }).success).toBe(false);
+    expect(joinGameBodySchema.safeParse({ cardNumber: 2 }).success).toBe(true);
+    expect(joinGameBodySchema.safeParse({ cardNumber: 2, userId: 'forged' }).success).toBe(false);
+    const roomInput = {
+      name: 'Room',
+      stakeMinor: 0,
+      minPlayers: 2,
+      maxPlayers: 4,
+      drawIntervalMs: 5000,
+      activePatterns: ['row-1'],
+      cardPoolSize: 4,
+    };
+    expect(createRoomBodySchema.safeParse(roomInput).success).toBe(true);
+    expect(createRoomBodySchema.safeParse({ ...roomInput, maxPlayers: 5 }).success).toBe(false);
+    expect(createRoomBodySchema.safeParse({ ...roomInput, drawIntervalMs: 999 }).success).toBe(false);
+    expect(createRoomBodySchema.safeParse({ ...roomInput, extra: true }).success).toBe(false);
+  });
   it('accepts only serializable structured errors', () => {
     expect(errorDtoSchema.safeParse(error).success).toBe(true);
     expect(
@@ -125,7 +151,7 @@ describe('socket intent catalogue', () => {
       expect(
         clientPayloadSchemas[event].safeParse({ ...intents[event], userId: 'forged' }).success,
       ).toBe(false);
-      expect(clientPayloadSchemas[event].safeParse({}).success).toBe(false);
+      expect(clientPayloadSchemas[event].safeParse({}).success).toBe(event === 'state:resync');
     });
   }
 });
@@ -137,6 +163,11 @@ const facts = {
     seedHash,
     yourCard: card,
     drawIntervalMs: 3000,
+    seq: 1,
+  },
+  'game:starting': {
+    gameId: 'game-1',
+    startsAt: '2026-01-01T00:00:00.000Z',
     seq: 1,
   },
   'game:number': { gameId: 'game-1', number: 1, calledNumbers: [1], seq: 2 },

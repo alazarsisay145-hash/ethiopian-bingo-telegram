@@ -22,7 +22,10 @@ export const clientPayloadSchemas = {
   'card:release': roomIntentSchema,
   'game:ready': roomIntentSchema,
   'game:claim': z.object({ gameId: identifierSchema }).strict(),
-  'state:resync': z.object({ gameId: identifierSchema, lastSeq: sequenceSchema }).strict(),
+  'state:resync': z.object({
+    gameId: identifierSchema.optional(),
+    lastSeq: sequenceSchema.default(0),
+  }).strict(),
 } as const;
 
 export const serverPayloadSchemas = {
@@ -44,6 +47,11 @@ export const serverPayloadSchemas = {
       seq: sequenceSchema,
     })
     .strict(),
+  'game:starting': z.object({
+    gameId: identifierSchema,
+    startsAt: z.string().datetime(),
+    seq: sequenceSchema,
+  }).strict(),
   'game:number': z
     .object({
       gameId: identifierSchema,

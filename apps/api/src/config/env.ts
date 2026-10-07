@@ -29,6 +29,10 @@ export const envSchema = z.object({
   ).pipe(z.array(z.string().regex(/^[1-9]\d*$/).transform(Number).pipe(
     z.number().int().positive().safe(),
   ))),
+  MAX_ACTIVE_GAMES_PER_USER: z.coerce.number().int().min(1).max(100).default(3),
+  HTTP_RATE_LIMIT_MAX: z.coerce.number().int().min(1).max(10000).default(100),
+  HTTP_RATE_LIMIT_WINDOW_MS: z.coerce.number().int().min(1000).max(3600000).default(60000),
+  WS_RATE_LIMIT_WINDOW_MS: z.coerce.number().int().min(1000).max(3600000).default(10000),
 }).superRefine((env, context) => {
   if (env.NODE_ENV === 'production' && !env.SEED_ENCRYPTION_KEY) {
     context.addIssue({
