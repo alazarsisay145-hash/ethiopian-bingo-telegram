@@ -78,11 +78,7 @@ export function registerHttpRoutes(app: FastifyInstance, deps: HttpApiDependenci
     deps.env.TELEGRAM_INITDATA_MAX_BYTES,
   );
   const admin = [auth, requireRole('ADMIN', 'SUPER_ADMIN')];
-  const member = requireGameMembership(deps.repositories.gamePlayers);
-  const gameMember = async (request: import('fastify').FastifyRequest): Promise<void> => {
-    const { gameId } = validate(gameParamsSchema, request.params);
-    await member(gameId, request.user!.id);
-  };
+  const gameMember = requireGameMembership(deps.repositories.gamePlayers);
   app.addHook('onRequest', async (request) => {
     const path = request.routeOptions.url ?? request.url.split('?')[0]!;
     if (path !== '/api/v1' && !path.startsWith('/api/v1/')) return;

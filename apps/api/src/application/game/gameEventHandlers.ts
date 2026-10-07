@@ -33,7 +33,7 @@ export function createGameEventHandlers(options: {
   gameRooms: GameRoomService;
 }): ApplicationEventHandlers {
   const ensureMember = async (gameId: string, context: EventContext): Promise<void> => {
-    if (!(await options.membership.isMember(gameId, context.user.id))) {
+    if (!(await options.membership.isMember(gameId, context.auth.userId))) {
       throw new AppError(ErrorCode.FORBIDDEN, 403, 'Game membership required');
     }
   };
@@ -42,7 +42,7 @@ export function createGameEventHandlers(options: {
     'room:join': async ({ roomId }, context) => {
       const game = await options.gameRooms.getOrCreateWaitingGame(roomId);
       await context.joinRoom?.(`room:${roomId}`);
-      if (await options.membership.isMember(game.id, context.user.id)) {
+      if (await options.membership.isMember(game.id, context.auth.userId)) {
         await context.joinRoom?.(`game:${game.id}`);
       }
       await options.gameRooms.publishRoomState(game.id);
@@ -54,7 +54,7 @@ export function createGameEventHandlers(options: {
       const game = await options.gameRooms.getOrCreateWaitingGame(roomId);
       await options.gameRooms.joinGame({
         gameId: game.id,
-        userId: context.user.id,
+        userId: context.auth.userId,
         cardNumber,
         requestId: context.requestId,
       });
@@ -65,25 +65,25 @@ export function createGameEventHandlers(options: {
       const game = await options.games.findActiveByRoom(roomId);
       if (!game) throw new AppError(ErrorCode.NOT_FOUND, 404, 'Waiting game not found');
       await ensureMember(game.id, context);
-      await options.gameRooms.leaveGame(game.id, context.user.id, context.requestId);
+      await options.gameRooms.leaveGame(game.id, context.auth.userId, context.requestId);
       await context.leaveRoom?.(`game:${game.id}`);
     },
     'game:ready': async ({ roomId }, context) => {
       const game = await options.gameRooms.getOrCreateWaitingGame(roomId);
       await ensureMember(game.id, context);
       if (game.startingAt) {
-        await options.publisher.publishUser(context.user.id, 'game:starting', {
+        await options.publisher.publishUser(context.auth.userId, 'game:starting', {
           gameId: game.id,
           startsAt: game.startingAt.toISOString(),
           seq: game.currentSeq,
         });
-        await options.gameRooms.publishRoomState(game.id);
       }
+      await options.gameRooms.publishRoomState(game.id);
     },
     'game:claim': async ({ gameId }, context) => {
       await ensureMember(gameId, context);
       const result = await options.claims.claim(
-        { gameId, userId: context.user.id, requestId: context.requestId },
+        { gameId, userId: context.auth.userId, requestId: context.requestId },
         await options.fences.current(gameId),
       );
       const players = await options.players.listByGame(gameId);
@@ -98,7 +98,7 @@ export function createGameEventHandlers(options: {
         await resyncGame(gameId, lastSeq, context);
         return;
       }
-      const memberships = await options.players.listByUser(context.user.id, [
+      const memberships = await options.players.listByUser(context.auth.userId, [
         'LOBBY',
         'STARTING',
         'RUNNING',
@@ -119,7 +119,7 @@ export function createGameEventHandlers(options: {
     if (!game) throw new AppError(ErrorCode.NOT_FOUND, 404, 'Game not found');
     await context.joinRoom?.(`room:${game.roomId}`);
     await context.joinRoom?.(`game:${game.id}`);
-    const ownCard = await options.players.findByGameAndUser(gameId, context.user.id);
+    const ownCard = await options.players.findByGameAndUser(gameId, context.auth.userId);
     const projection = await options.projector.project(game);
     const payload = {
       game: {
@@ -143,12 +143,12 @@ export function createGameEventHandlers(options: {
       seq: projection.seq,
     };
     if (lastSeq >= projection.seq || lastSeq < 0 || projection.seq - lastSeq > 100) {
-      await options.publisher.publishUser(context.user.id, 'state:snapshot', payload);
+      await options.publisher.publishUser(context.auth.userId, 'state:snapshot', payload);
       return;
     }
     const replay = await options.events.listSince(gameId, lastSeq, 100);
     if (replay.length !== projection.seq - lastSeq) {
-      await options.publisher.publishUser(context.user.id, 'state:snapshot', payload);
+      await options.publisher.publishUser(context.auth.userId, 'state:snapshot', payload);
       return;
     }
     if (
@@ -163,7 +163,7 @@ export function createGameEventHandlers(options: {
           ].includes(type),
       )
     ) {
-      await options.publisher.publishUser(context.user.id, 'state:snapshot', payload);
+      await options.publisher.publishUser(context.auth.userId, 'state:snapshot', payload);
       return;
     }
     const before = await options.events.listSince(gameId, 0, 1000);
@@ -175,14 +175,14 @@ export function createGameEventHandlers(options: {
       if (event.type === 'NUMBER_CALLED') {
         const number = eventData.number as number;
         calledNumbers = [...calledNumbers, number];
-        await options.publisher.publishUser(context.user.id, 'game:number', {
+        await options.publisher.publishUser(context.auth.userId, 'game:number', {
           gameId,
           number,
           calledNumbers,
           seq: event.seq,
         });
       } else if (event.type === 'GAME_STARTED') {
-        await options.publisher.publishUser(context.user.id, 'game:started', {
+        await options.publisher.publishUser(context.auth.userId, 'game:started', {
           gameId,
           roomId: game.roomId,
           seedHash: eventData.seedHash,
@@ -193,7 +193,7 @@ export function createGameEventHandlers(options: {
             : {}),
         });
       } else if (event.type === 'GAME_ENDED') {
-        await options.publisher.publishUser(context.user.id, 'game:ended', {
+        await options.publisher.publishUser(context.auth.userId, 'game:ended', {
           gameId,
           winnerIds: eventData.winnerIds,
           seedRevealed: eventData.seedRevealed,
@@ -209,7 +209,7 @@ export function createGameEventHandlers(options: {
           patterns: eventData.patterns,
           seq: event.seq,
         };
-        await options.publisher.publishUser(context.user.id, 'game:claim_result', claimResult);
+        await options.publisher.publishUser(context.auth.userId, 'game:claim_result', claimResult);
       }
     }
   }

@@ -1,4 +1,4 @@
-import { AppError, ErrorCode } from '@bingo/shared';
+import { AppError, ErrorCode, gameParamsSchema, roomParamsSchema } from '@bingo/shared';
 import type { FastifyRequest } from 'fastify';
 import type { AuthContext, User, UserRole } from '../../domain/entities.js';
 import type { AuthenticationPort } from '../../domain/ports.js';
@@ -121,19 +121,29 @@ export function requireRole(...roles: UserRole[]): (request: FastifyRequest) => 
   };
 }
 
-export function requireGameMembership(players: GamePlayerRepository) {
-  return async (gameId: string, userId: string): Promise<void> => {
-    if (!(await players.findByGameAndUser(gameId, userId))) {
+type ResourceIdResolver = (request: FastifyRequest) => string | Promise<string>;
+
+export function requireGameMembership(
+  players: GamePlayerRepository,
+  resolveGameId: ResourceIdResolver = (request) => gameParamsSchema.parse(request.params).gameId,
+): (request: FastifyRequest) => Promise<void> {
+  return async (request): Promise<void> => {
+    if (!request.auth) throw new AppError(ErrorCode.UNAUTHORIZED, 401, 'Authentication required');
+    const gameId = await resolveGameId(request);
+    if (!(await players.findByGameAndUser(gameId, request.auth.userId))) {
       throw new AppError(ErrorCode.FORBIDDEN, 403, 'Game membership required');
     }
   };
 }
 
-export function requireRoomMembership(games: GameRepository, players: GamePlayerRepository) {
-  const member = requireGameMembership(players);
-  return async (roomId: string, userId: string): Promise<void> => {
-    const game = await games.findActiveByRoom(roomId);
+export function requireRoomMembership(
+  games: GameRepository,
+  players: GamePlayerRepository,
+  resolveRoomId: ResourceIdResolver = (request) => roomParamsSchema.parse(request.params).roomId,
+): (request: FastifyRequest) => Promise<void> {
+  return requireGameMembership(players, async (request) => {
+    const game = await games.findActiveByRoom(await resolveRoomId(request));
     if (!game) throw new AppError(ErrorCode.FORBIDDEN, 403, 'Room membership required');
-    await member(game.id, userId);
-  };
+    return game.id;
+  });
 }

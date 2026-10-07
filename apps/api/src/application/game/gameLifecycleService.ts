@@ -54,8 +54,8 @@ export class GameLifecycleService {
       if (room.status !== 'OPEN')
         throw new AppError(ErrorCode.INVALID_STATE, 409, 'Room is closed');
       if (!user) throw new AppError(ErrorCode.NOT_FOUND, 404, 'User not found');
-      if (user.status === 'BANNED')
-        throw new AppError(ErrorCode.FORBIDDEN, 403, 'Banned users cannot join');
+      if (user.status !== 'ACTIVE')
+        throw new AppError(ErrorCode.FORBIDDEN, 403, 'Inactive users cannot join');
       if (
         !Number.isSafeInteger(input.cardNumber) ||
         input.cardNumber < 1 ||

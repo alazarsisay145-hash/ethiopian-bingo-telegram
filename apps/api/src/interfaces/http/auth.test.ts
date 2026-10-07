@@ -83,18 +83,29 @@ describe('HTTP authentication and authorization', () => {
     const findByGameAndUser = vi.fn(async () => null as object | null);
     const players = { findByGameAndUser } as never;
     const findActiveByRoom = vi.fn(async () => ({ id: 'game-1' }));
-    await expect(requireGameMembership(players)('game-1', 'verified-user')).rejects.toMatchObject({
+    const request = {
+      auth: { userId: 'verified-user' },
+      user: { id: 'forged-profile-user' },
+      body: { userId: 'forged-body-user' },
+    } as never;
+    await expect(requireGameMembership(players, () => 'game-1')(request)).rejects.toMatchObject({
       code: ErrorCode.FORBIDDEN,
     });
     await expect(
-      requireRoomMembership({ findActiveByRoom } as never, players)('room-1', 'verified-user'),
+      requireRoomMembership({ findActiveByRoom } as never, players, () => 'room-1')(request),
     ).rejects.toMatchObject({ code: ErrorCode.FORBIDDEN });
     expect(findActiveByRoom).toHaveBeenCalledWith('room-1');
     expect(findByGameAndUser).toHaveBeenCalledWith('game-1', 'verified-user');
     findByGameAndUser.mockResolvedValue({ userId: 'verified-user' });
     await expect(
-      requireRoomMembership({ findActiveByRoom } as never, players)('room-1', 'verified-user'),
+      requireRoomMembership({ findActiveByRoom } as never, players, () => 'room-1')(request),
     ).resolves.toBeUndefined();
+    await expect(requireGameMembership(players)({ auth: null } as never)).rejects.toMatchObject({
+      code: ErrorCode.UNAUTHORIZED,
+    });
+    await expect(
+      requireRoomMembership({ findActiveByRoom } as never, players)({ auth: null } as never),
+    ).rejects.toMatchObject({ code: ErrorCode.UNAUTHORIZED });
   });
   it('composes early authentication, active-user policy and ignores only matching identity claims', async () => {
     const repositories = createInMemoryRepositories();

@@ -325,6 +325,28 @@ describe('Socket.IO authentication and intent boundary', () => {
     expect(handler).not.toHaveBeenCalled();
   });
   it.each([
+    ['state:resync', { userId: 'another-player' }],
+    ['state:resync', { telegramId: 999 }],
+    ['state:resync', { username: 'another-player' }],
+    ['game:claim', { userId: 'another-player' }],
+    ['game:claim', { telegramId: 999 }],
+    ['game:claim', { username: 'another-player' }],
+  ] as const)(
+    'rejects identity substitution on %s before validating or dispatching',
+    async (event, claims) => {
+      const handler = vi.fn(async () => undefined);
+      const socket = client(await start({ eventHandlers: { [event]: handler } }), {
+        initData: signedInitData(),
+      });
+      await connected(socket);
+      const response = await new Promise<{ ok: boolean; error: { code: string } }>((resolve) =>
+        socket.emit(event, { gameId: 'game-1', ...claims }, resolve),
+      );
+      expect(response).toMatchObject({ ok: false, error: { code: ErrorCode.FORBIDDEN } });
+      expect(handler).not.toHaveBeenCalled();
+    },
+  );
+  it.each([
     'room:join',
     'room:leave',
     'card:select',

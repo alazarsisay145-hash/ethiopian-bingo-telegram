@@ -73,7 +73,7 @@ export class GameRoomService {
       if (!room || seed === null) throw new AppError(ErrorCode.NOT_FOUND, 404, 'Room not found');
       if (room.status !== 'OPEN') throw new AppError(ErrorCode.INVALID_STATE, 409, 'Room is closed');
       if (!user) throw new AppError(ErrorCode.NOT_FOUND, 404, 'User not found');
-      if (user.status === 'BANNED') throw new AppError(ErrorCode.FORBIDDEN, 403, 'Banned users cannot join');
+      if (user.status !== 'ACTIVE') throw new AppError(ErrorCode.FORBIDDEN, 403, 'Inactive users cannot join');
       if (existing) throw new AppError(ErrorCode.CONFLICT, 409, 'Already joined this game');
       const activeMemberships = await repositories.gamePlayers.listByUser(input.userId);
       if (activeMemberships.length >= this.maxActiveGamesPerUser) {

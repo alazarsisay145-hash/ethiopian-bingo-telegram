@@ -34,7 +34,7 @@ const otherCard: GamePlayer = {
   cardCells: generateCard('test-pool', 2).cells,
 };
 const context: EventContext = {
-  user: { id: ownCard.userId, telegramId: 123, firstName: 'Player' },
+  user: { id: 'legacy-profile-is-not-authority', telegramId: 123, firstName: 'Player' },
   auth: {
     userId: ownCard.userId,
     telegramId: 123,
@@ -48,6 +48,33 @@ const context: EventContext = {
 };
 
 describe('GameEventHandlers', () => {
+  it('derives claims only from the canonical auth context, never the profile id', async () => {
+    const claim = vi.fn(async () => ({
+      gameId: game.id,
+      userId: context.auth.userId,
+      accepted: false,
+      patterns: [],
+      seq: 3,
+    }));
+    const isMember = vi.fn(async () => true);
+    const handlers = createGameEventHandlers({
+      games: {} as never,
+      players: { listByGame: async () => [] } as never,
+      events: {} as never,
+      claims: { claim } as never,
+      projector: {} as never,
+      membership: { isMember },
+      fences: { current: async () => ({ instanceId: 'runner', fencingToken: 1n }) },
+      publisher: { publishUser: vi.fn() },
+      gameRooms: {} as never,
+    });
+    await handlers['game:claim']?.({ gameId: game.id }, context);
+    expect(isMember).toHaveBeenCalledWith(game.id, context.auth.userId);
+    expect(claim).toHaveBeenCalledWith(
+      { gameId: game.id, userId: context.auth.userId, requestId: context.requestId },
+      { instanceId: 'runner', fencingToken: 1n },
+    );
+  });
   it('does not subscribe a room spectator to private game facts', async () => {
     const joinRoom = vi.fn(async () => undefined);
     const handlers = createGameEventHandlers({
@@ -89,7 +116,7 @@ describe('GameEventHandlers', () => {
     await expect(
       handlers['state:resync']?.({ lastSeq: 0 }, { ...context, joinRoom }),
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });
-    expect(listByUser).toHaveBeenCalledWith(context.user.id, [
+    expect(listByUser).toHaveBeenCalledWith(context.auth.userId, [
       'LOBBY',
       'STARTING',
       'RUNNING',
