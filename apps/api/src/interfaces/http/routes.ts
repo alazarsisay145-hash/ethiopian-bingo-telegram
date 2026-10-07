@@ -175,7 +175,10 @@ export function registerHttpRoutes(app: FastifyInstance, deps: HttpApiDependenci
     return result;
   });
 
-  app.get('/api/v1/games/:gameId/results', { preHandler: auth }, async (request) => {
+  app.get('/api/v1/games/:gameId/results', {
+    preHandler: auth,
+    config: { rateLimit: { max: 20, timeWindow: 60_000 } },
+  }, async (request) => {
     const { gameId } = validate(gameParamsSchema, request.params);
     await deps.gameRooms.getMyCard(gameId, request.user!.id);
     const game = await deps.repositories.games.findById(gameId);
