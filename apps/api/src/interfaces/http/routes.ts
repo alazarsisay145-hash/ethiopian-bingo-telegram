@@ -75,6 +75,7 @@ export function registerHttpRoutes(app: FastifyInstance, deps: HttpApiDependenci
     deps.rateLimiter,
     deps.env.HTTP_RATE_LIMIT_MAX,
     deps.env.HTTP_RATE_LIMIT_WINDOW_MS,
+    deps.env.TELEGRAM_INITDATA_MAX_BYTES,
   );
   const admin = [auth, requireRole('ADMIN', 'SUPER_ADMIN')];
   const member = requireGameMembership(deps.repositories.gamePlayers);

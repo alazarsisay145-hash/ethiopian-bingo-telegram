@@ -17,6 +17,68 @@ import {
 } from './auth.js';
 
 describe('HTTP authentication and authorization', () => {
+  it('honors configurable UTF-8 credential bounds above the default transport limit', async () => {
+    const repositories = createInMemoryRepositories();
+    const user = await repositories.users.upsertFromTelegram({
+      telegramId: 2005n,
+      firstName: 'Bounded',
+    });
+    const authenticate = vi.fn(async () => ({
+      id: user.id,
+      userId: user.id,
+      telegramId: 2005,
+      firstName: 'Bounded',
+      role: 'PLAYER' as const,
+      status: 'ACTIVE' as const,
+      authDate: 1,
+      verifiedAt: 1000,
+    }));
+    const app = Fastify();
+    app.decorateRequest('user', null);
+    app.decorateRequest('auth', null);
+    app.setErrorHandler((error, request, reply) => {
+      const mapped = mapError(error, request.id);
+      void reply.code(mapped.status).send(mapped.body);
+    });
+    app.get(
+      '/me',
+      {
+        onRequest: requireUser(
+          { authenticate },
+          repositories.users,
+          undefined,
+          100,
+          60_000,
+          20_000,
+        ),
+      },
+      () => true,
+    );
+    try {
+      expect(
+        (
+          await app.inject({
+            url: '/me',
+            headers: { authorization: `tma ${'a'.repeat(18_000)}` },
+          })
+        ).statusCode,
+      ).toBe(200);
+      for (const initData of ['a'.repeat(20_001), '😀'.repeat(6000)]) {
+        expect(
+          (
+            await app.inject({
+              url: '/me',
+              headers: { 'x-telegram-init-data': initData },
+            })
+          ).statusCode,
+        ).toBe(401);
+      }
+      expect(authenticate).toHaveBeenCalledTimes(1);
+    } finally {
+      await app.close();
+    }
+  });
+
   it('uses persisted game and room membership rather than client claims', async () => {
     const findByGameAndUser = vi.fn(async () => null as object | null);
     const players = { findByGameAndUser } as never;
@@ -90,7 +152,13 @@ describe('HTTP authentication and authorization', () => {
       const success = await app.inject({
         method: 'POST',
         url: `/intent?telegramId=2004&username=real`,
-        headers: { authorization: 'tma proof', 'x-user-id': user.id, 'x-telegram-id': '2004' },
+        headers: {
+          authorization: 'tma proof',
+          'x-user-id': user.id,
+          'x-telegram-id': '2004',
+          'x-username': 'real',
+          'x-telegram-username': 'real',
+        },
         payload: { userId: user.id, telegramId: 2004, username: 'real', cardNumber: 1 },
       });
       expect(success.statusCode).toBe(200);
@@ -123,7 +191,7 @@ describe('HTTP authentication and authorization', () => {
             headers: { authorization: 'tma proof' },
           })
         ).statusCode,
-      ).toBe(400);
+      ).toBe(403);
       expect(
         (
           await app.inject({
@@ -132,7 +200,22 @@ describe('HTTP authentication and authorization', () => {
             headers: { authorization: 'tma proof', 'x-user-id': 'forged' },
           })
         ).statusCode,
-      ).toBe(400);
+      ).toBe(403);
+      for (const headers of [
+        { 'x-username': 'forged' },
+        { 'x-telegram-username': 'forged' },
+        { 'x-username': 'forged', 'x-telegram-username': 'real' },
+      ]) {
+        expect(
+          (
+            await app.inject({
+              method: 'POST',
+              url: '/intent',
+              headers: { authorization: 'tma proof', ...headers },
+            })
+          ).statusCode,
+        ).toBe(403);
+      }
       expect(
         (
           await app.inject({
@@ -182,6 +265,14 @@ describe('HTTP authentication and authorization', () => {
       expect(response.body).not.toContain('secret');
       expect(consume).toHaveBeenCalledTimes(1);
       expect(consume.mock.calls[0]).toEqual(['auth:http:ip:127.0.0.1', 100, 60000]);
+      authenticate.mockRejectedValueOnce(new AppError(ErrorCode.RATE_LIMITED, 429, 'secret proof'));
+      const limited = await app.inject({
+        url: '/me',
+        headers: { authorization: 'tma signed' },
+      });
+      expect(limited.statusCode).toBe(429);
+      expect(limited.json().error.code).toBe(ErrorCode.RATE_LIMITED);
+      expect(limited.body).not.toContain('secret proof');
     } finally {
       await app.close();
     }

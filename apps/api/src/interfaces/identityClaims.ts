@@ -4,6 +4,7 @@ export function checkIdentityClaims(
   value: unknown,
   identity: { id: string; telegramId: number | string; username?: string },
   removeMatching = false,
+  mismatchCode: ErrorCode.VALIDATION_ERROR | ErrorCode.FORBIDDEN = ErrorCode.VALIDATION_ERROR,
 ): void {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return;
   const claims = value as Record<string, unknown>;
@@ -19,11 +20,28 @@ export function checkIdentityClaims(
       String(claims[key]) !== String(expected[key])
     ) {
       throw new AppError(
-        ErrorCode.VALIDATION_ERROR,
-        400,
+        mismatchCode,
+        mismatchCode === ErrorCode.FORBIDDEN ? 403 : 400,
         'Identity claim does not match authenticated user',
       );
     }
+
     if (removeMatching) delete claims[key];
+  }
+}
+
+export function checkIdentityHeaders(
+  headers: Record<string, unknown>,
+  identity: { id: string; telegramId: number | string; username?: string },
+): void {
+  for (const [header, claim] of [
+    ['x-user-id', 'userId'],
+    ['x-telegram-id', 'telegramId'],
+    ['x-username', 'username'],
+    ['x-telegram-username', 'username'],
+  ] as const) {
+    if (headers[header] !== undefined) {
+      checkIdentityClaims({ [claim]: headers[header] }, identity, false, ErrorCode.FORBIDDEN);
+    }
   }
 }

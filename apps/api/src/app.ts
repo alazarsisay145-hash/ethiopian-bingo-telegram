@@ -25,7 +25,7 @@ import { GameRoomService } from './application/rooms/gameRoomService.js';
 import { LobbyScheduler } from './application/rooms/lobbyScheduler.js';
 import { assessReadiness } from './application/readiness.js';
 import { AesGcmSeedVault, NodeSecretSource } from './infrastructure/crypto/seedVault.js';
-import { createInfrastructure } from './infrastructure/bootstrap.js';
+import { createInfrastructure, createTelegramAuthentication } from './infrastructure/bootstrap.js';
 import {
   RepositoryGameFenceProvider,
   RepositoryGameMembership,
@@ -35,7 +35,6 @@ import { RedisGameLock } from './infrastructure/redis/gameLock.js';
 import { RedisGameOwnershipLease } from './infrastructure/redis/gameOwnershipLease.js';
 import { RedisRateLimiter } from './infrastructure/redis/rateLimiter.js';
 import { SystemClock, SystemScheduler } from './infrastructure/time/systemScheduler.js';
-import { TelegramAuthentication } from './infrastructure/telegram/initData.js';
 import { SocketIoGameEventPublisher } from './infrastructure/ws/socketIoGameEventPublisher.js';
 import { mapError } from './interfaces/http/errors.js';
 import { registerHttpRoutes } from './interfaces/http/routes.js';
@@ -62,14 +61,22 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     options.rateLimiter ?? (redis ? new RedisRateLimiter(redis) : undefined);
   const authentication =
     options.authentication ??
-    new TelegramAuthentication(
-      env.TELEGRAM_BOT_TOKEN,
-      {
-        maxAgeSeconds: env.TELEGRAM_INITDATA_MAX_AGE_SECONDS,
-        futureSkewSeconds: env.TELEGRAM_INITDATA_CLOCK_SKEW_SECONDS,
-        maxBytes: env.TELEGRAM_INITDATA_MAX_BYTES,
-      },
+    createTelegramAuthentication(
+      env,
       repositories?.users,
+      sharedRateLimiter
+        ? async (telegramId) => {
+            if (
+              !(await sharedRateLimiter.consume(
+                `auth:telegram:${telegramId}`,
+                env.HTTP_RATE_LIMIT_MAX,
+                env.HTTP_RATE_LIMIT_WINDOW_MS,
+              ))
+            ) {
+              throw new AppError(ErrorCode.RATE_LIMITED, 429, 'Too many requests');
+            }
+          }
+        : undefined,
     );
   const gameRuntime =
     repositories && redis && infrastructure.unitOfWork && env.SEED_ENCRYPTION_KEY
@@ -234,6 +241,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     genReqId: () => randomUUID(),
     bodyLimit: 16 * 1024,
     requestTimeout: 30_000,
+    http: { maxHeaderSize: Math.max(16_384, env.TELEGRAM_INITDATA_MAX_BYTES + 8192) },
   });
   await app.register(helmet);
   await app.register(cors, { origin: env.CORS_ORIGINS, credentials: false });
@@ -293,6 +301,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     logger: app.log,
     authRateLimitMax: env.HTTP_RATE_LIMIT_MAX,
     authRateLimitWindowMs: env.HTTP_RATE_LIMIT_WINDOW_MS,
+    initDataMaxBytes: env.TELEGRAM_INITDATA_MAX_BYTES,
     ...(options.restoreRooms ? { restoreRooms: options.restoreRooms } : {}),
     ...(gameRuntime
       ? {

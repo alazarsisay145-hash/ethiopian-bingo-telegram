@@ -118,5 +118,6 @@ return a personalized snapshot instead.
 
 Stake debit, card reservation, pot update and event append share one database
 transaction. Leaving a waiting/starting game and cancellation refund through
-idempotent ledger entries in a transaction. Card previews are generated from
-the server-only room seed; only a member receives their private card.
+idempotent ledger entries in a transaction. Card reservations are generated from
+the server-only room seed; card reads return only the authenticated member's
+persisted own card.

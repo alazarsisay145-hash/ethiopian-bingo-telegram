@@ -283,7 +283,7 @@ describe('player HTTP API', () => {
             headers: headers(1),
           })
         ).statusCode,
-      ).toBe(400);
+      ).toBe(403);
       const duplicate = await app.inject({
         method: 'POST',
         url: `/api/v1/games/${gameId}/join`,

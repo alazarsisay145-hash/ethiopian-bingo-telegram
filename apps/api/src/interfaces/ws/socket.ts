@@ -15,7 +15,7 @@ import type {
 import type { AuthContext } from '../../domain/entities.js';
 import type { RateLimiter } from '../../domain/ports.js';
 import { mapError, validate } from '../http/errors.js';
-import { checkIdentityClaims } from '../identityClaims.js';
+import { checkIdentityClaims, checkIdentityHeaders } from '../identityClaims.js';
 
 interface SocketData {
   user: UserProfile & AuthContext;
@@ -50,11 +50,12 @@ export function attachSocketServer(
     rateLimitWindowMs?: number;
     authRateLimitMax?: number;
     authRateLimitWindowMs?: number;
+    initDataMaxBytes?: number;
   },
 ): BingoSocketServer {
   const io: BingoSocketServer = new Server(server, {
     cors: { origin: options.origins, credentials: false },
-    maxHttpBufferSize: 16 * 1024,
+    maxHttpBufferSize: Math.max(16 * 1024, (options.initDataMaxBytes ?? 16_384) + 4096),
     allowRequest: (request, callback) => {
       const origin = request.headers.origin;
       callback(null, origin === undefined || options.origins.includes(origin));
@@ -80,7 +81,7 @@ export function attachSocketServer(
         !('initData' in auth) ||
         typeof auth.initData !== 'string' ||
         !auth.initData ||
-        auth.initData.length > 16384
+        Buffer.byteLength(auth.initData, 'utf8') > (options.initDataMaxBytes ?? 16_384)
       ) {
         throw new AppError(ErrorCode.UNAUTHORIZED, 401, 'Authentication required');
       }
@@ -94,30 +95,7 @@ export function attachSocketServer(
           ...(verified.username ? { username: verified.username } : {}),
         }),
       };
-      checkIdentityClaims(auth, socket.data.user);
-      checkIdentityClaims(socket.handshake.query, socket.data.user);
-      checkIdentityClaims(
-        {
-          ...(socket.handshake.headers['x-user-id'] !== undefined
-            ? { userId: socket.handshake.headers['x-user-id'] }
-            : {}),
-          ...(socket.handshake.headers['x-telegram-id'] !== undefined
-            ? { telegramId: socket.handshake.headers['x-telegram-id'] }
-            : {}),
-        },
-        socket.data.user,
-      );
       const user = socket.data.user;
-      if (user.status !== 'ACTIVE') throw new AppError(ErrorCode.FORBIDDEN, 403, 'Access denied');
-      socket.data.auth = {
-        userId: user.id,
-        telegramId: user.telegramId,
-        role: user.role,
-        status: user.status,
-        authDate: user.authDate,
-        verifiedAt: user.verifiedAt,
-      };
-      await options.authorizeUser?.(user.id);
       if (
         options.rateLimiter &&
         !(await options.rateLimiter.consume(
@@ -128,6 +106,19 @@ export function attachSocketServer(
       ) {
         throw new AppError(ErrorCode.RATE_LIMITED, 429, 'Too many requests');
       }
+      checkIdentityClaims(auth, socket.data.user, false, ErrorCode.FORBIDDEN);
+      checkIdentityClaims(socket.handshake.query, socket.data.user, false, ErrorCode.FORBIDDEN);
+      checkIdentityHeaders(socket.handshake.headers, socket.data.user);
+      if (user.status !== 'ACTIVE') throw new AppError(ErrorCode.FORBIDDEN, 403, 'Access denied');
+      socket.data.auth = {
+        userId: user.id,
+        telegramId: user.telegramId,
+        role: user.role,
+        status: user.status,
+        authDate: user.authDate,
+        verifiedAt: user.verifiedAt,
+      };
+      await options.authorizeUser?.(user.id);
       if (options.restoreRooms) {
         const rooms = await options.restoreRooms(user.id);
         await Promise.all(rooms.map((room) => socket.join(room)));
@@ -183,6 +174,7 @@ export function attachSocketServer(
         ) {
           throw new AppError(ErrorCode.RATE_LIMITED, 429, 'Too many requests');
         }
+        checkIdentityClaims(payload, socket.data.user, false, ErrorCode.FORBIDDEN);
         const parsed = validate(clientPayloadSchemas[event], payload);
         const handler = handlers[event] as
           | ((input: ClientPayload<ClientEvent>, context: EventContext) => Promise<void>)

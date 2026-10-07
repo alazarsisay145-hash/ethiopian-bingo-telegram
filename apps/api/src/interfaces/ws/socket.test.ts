@@ -62,6 +62,30 @@ afterEach(async () => {
 });
 
 describe('Socket.IO authentication and intent boundary', () => {
+  it.each([16_384, 25_000])(
+    'honors a configured %i-byte signed credential limit',
+    async (maxBytes) => {
+      const repositories = createInMemoryRepositories();
+      const socket = client(
+        await start({
+          env: { ...testEnv, TELEGRAM_INITDATA_MAX_BYTES: maxBytes },
+          authentication: new TelegramAuthentication(
+            testBotToken,
+            { maxBytes },
+            repositories.users,
+          ),
+        }),
+        { initData: signedInitData({ query_id: 'a'.repeat(18_000) }) },
+      );
+      if (maxBytes < 18_000) {
+        expect((await rejected(socket)).data?.code).toBe(ErrorCode.UNAUTHORIZED);
+      } else {
+        await connected(socket);
+        expect(socket.connected).toBe(true);
+      }
+    },
+  );
+
   it('restores both active room/game channels before connection and stores server auth context', async () => {
     const restoreRooms = vi.fn(async () => ['room:active-room', 'game:active-game']);
     const observe = vi.fn();
@@ -147,7 +171,7 @@ describe('Socket.IO authentication and intent boundary', () => {
     const url = await start();
     for (const claim of [{ userId: 'forged' }, { telegramId: 999 }, { username: 'forged' }]) {
       const error = await rejected(client(url, { initData: signedInitData(), ...claim }));
-      expect(error.data?.code).toBe(ErrorCode.VALIDATION_ERROR);
+      expect(error.data?.code).toBe(ErrorCode.FORBIDDEN);
     }
     const socket = client(url, {
       initData: signedInitData(),
@@ -163,6 +187,9 @@ describe('Socket.IO authentication and intent boundary', () => {
       { query: { telegramId: '999' } },
       { extraHeaders: { 'x-user-id': 'forged' } },
       { extraHeaders: { 'x-telegram-id': '999' } },
+      { extraHeaders: { 'x-username': 'forged' } },
+      { extraHeaders: { 'x-telegram-username': 'forged' } },
+      { extraHeaders: { 'x-username': 'forged', 'x-telegram-username': 'tester' } },
     ]) {
       const socket = io(url, {
         auth: { initData: signedInitData() },
@@ -172,8 +199,38 @@ describe('Socket.IO authentication and intent boundary', () => {
         ...options,
       });
       clients.push(socket);
-      expect((await rejected(socket)).data?.code).toBe(ErrorCode.VALIDATION_ERROR);
+      expect((await rejected(socket)).data?.code).toBe(ErrorCode.FORBIDDEN);
     }
+    const matching = io(url, {
+      auth: { initData: signedInitData() },
+      transports: ['websocket'],
+      reconnection: false,
+      autoConnect: false,
+      extraHeaders: {
+        'x-telegram-id': '12345',
+        'x-username': 'tester',
+        'x-telegram-username': 'tester',
+      },
+    });
+    clients.push(matching);
+    await connected(matching);
+  });
+  it('consumes verified-user handshake budget before rejecting identity claims', async () => {
+    let attempts = 0;
+    const consume = vi.fn(
+      async (key: string) => !key.startsWith('auth:ws:user:') || ++attempts <= 2,
+    );
+    const url = await start({ rateLimiter: { consume } });
+    for (const expected of [ErrorCode.FORBIDDEN, ErrorCode.FORBIDDEN, ErrorCode.RATE_LIMITED]) {
+      const socket = client(url, { initData: signedInitData(), telegramId: 999 });
+      expect((await rejected(socket)).data?.code).toBe(expected);
+    }
+    const userKeys = consume.mock.calls
+      .map(([key]) => key)
+      .filter((key) => key.startsWith('auth:ws:user:'));
+    expect(userKeys).toHaveLength(3);
+    expect(new Set(userKeys).size).toBe(1);
+    expect(userKeys[0]).not.toContain('999');
   });
   it('revalidates signed freshness on reconnect instead of trusting a previous connection', async () => {
     const socket = client(await start(), { initData: signedInitData() });
@@ -192,6 +249,17 @@ describe('Socket.IO authentication and intent boundary', () => {
     expect(consume).toHaveBeenCalledTimes(1);
     expect(consume.mock.calls[0]?.[0]).toMatch(/^auth:ws:ip:/);
     expect(JSON.stringify(consume.mock.calls)).not.toContain('forged');
+  });
+  it('limits stale signed proofs by verified Telegram identity, never by an unsigned claim', async () => {
+    const consume = vi.fn(async (key: string) => !key.startsWith('auth:telegram:'));
+    const url = await start({ authentication: undefined, rateLimiter: { consume } });
+    const unsigned = client(url, { initData: 'unsigned', telegramId: 999 });
+    expect((await rejected(unsigned)).data?.code).toBe(ErrorCode.UNAUTHORIZED);
+    expect(consume.mock.calls.map(([key]) => key)).not.toContain('auth:telegram:999');
+    expect(consume.mock.calls.some(([key]) => key.startsWith('auth:telegram:'))).toBe(false);
+    const signed = client(url, { initData: signedInitData({ auth_date: '1' }) });
+    expect((await rejected(signed)).data?.code).toBe(ErrorCode.RATE_LIMITED);
+    expect(consume.mock.calls.map(([key]) => key)).toContain('auth:telegram:12345');
   });
   it('rejects a persisted banned user rather than allowing a socket session', async () => {
     const socket = client(

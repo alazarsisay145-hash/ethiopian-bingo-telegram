@@ -8,7 +8,7 @@ import type {
   GameRepository,
   UserRepository,
 } from '../../domain/repositories.js';
-import { checkIdentityClaims } from '../identityClaims.js';
+import { checkIdentityClaims, checkIdentityHeaders } from '../identityClaims.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -23,6 +23,7 @@ export function requireAuth(
   rateLimiter?: RateLimiter,
   maxRequests = 100,
   windowMs = 60_000,
+  maxInitDataBytes = 16_384,
 ): (request: FastifyRequest) => Promise<void> {
   return async (request: FastifyRequest): Promise<void> => {
     if (request.auth) return;
@@ -43,7 +44,7 @@ export function requireAuth(
     if (
       typeof initData !== 'string' ||
       !initData ||
-      initData.length > 16_384 ||
+      Buffer.byteLength(initData, 'utf8') > maxInitDataBytes ||
       (authorization !== undefined && legacy !== undefined && legacy !== initData)
     ) {
       throw new AppError(ErrorCode.UNAUTHORIZED, 401, 'Authentication required');
@@ -54,6 +55,9 @@ export function requireAuth(
     } catch (error) {
       if (error instanceof AppError && error.code === ErrorCode.FORBIDDEN) {
         throw new AppError(ErrorCode.FORBIDDEN, 403, 'Access denied');
+      }
+      if (error instanceof AppError && error.code === ErrorCode.RATE_LIMITED) {
+        throw new AppError(ErrorCode.RATE_LIMITED, 429, 'Too many requests');
       }
       throw new AppError(ErrorCode.UNAUTHORIZED, 401, 'Authentication required');
     }
@@ -73,17 +77,7 @@ export function requireAuth(
       authDate: identity.authDate,
       verifiedAt: identity.verifiedAt,
     };
-    checkIdentityClaims(
-      {
-        ...(request.headers['x-user-id'] !== undefined
-          ? { userId: request.headers['x-user-id'] }
-          : {}),
-        ...(request.headers['x-telegram-id'] !== undefined
-          ? { telegramId: request.headers['x-telegram-id'] }
-          : {}),
-      },
-      identity,
-    );
+    checkIdentityHeaders(request.headers, identity);
   };
 }
 
@@ -115,7 +109,7 @@ export function rejectIdentityClaims(request: FastifyRequest): void {
     ...(request.user.username ? { username: request.user.username } : {}),
   };
   checkIdentityClaims(request.body, identity, true);
-  checkIdentityClaims(request.query, identity, true);
+  checkIdentityClaims(request.query, identity, true, ErrorCode.FORBIDDEN);
 }
 
 export function requireRole(...roles: UserRole[]): (request: FastifyRequest) => Promise<void> {

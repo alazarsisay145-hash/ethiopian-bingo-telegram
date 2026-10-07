@@ -76,6 +76,10 @@ name is accepted only outside production for compatibility, not as a bypass.
 - **Authorization:** role/status come from Postgres, not signed profile claims.
   Persisted memberships authorize private games/cards/resync. Neither another
   user's cells nor secret game seeds are included in personalized snapshots.
+  Existing room card pools are reused across games: prior owners may remember
+  their own previous card's cells. Owner-only endpoints prevent new unauthorized
+  reads, but cannot erase previously learned cards. Pool rotation is deferred
+  because changing engine/card-pool behavior is outside this phase.
 - **Abuse:** Redis-backed IP authentication budgets apply before credential
   processing. After HMAC verification and signed user parsing, a shared
   Telegram-ID budget also counts failures from expired proofs and inactive
@@ -96,8 +100,11 @@ name is accepted only outside production for compatibility, not as a bypass.
   response remain future work.
 - **Connected sockets:** reconnection requires fresh verification; already
   connected sockets are not durable sessions. Account restrictions are
-  rechecked on intents. Clients must re-open Telegram's Mini App when launch
-  data expires, then reconnect and request `state:resync`.
+  rechecked on intents, but a ban does not currently disconnect sockets or stop
+  their existing outbound subscriptions. Cross-instance disconnect/revocation
+  is deferred session/infrastructure work; do not treat inbound guards as
+  immediate stream revocation. Clients must re-open Telegram's Mini App when
+  launch data expires, then reconnect and request `state:resync`.
 
 Proxy IP trust is deliberately not enabled globally. Configure trusted proxy
 boundaries carefully before deployment; otherwise attackers could forge
