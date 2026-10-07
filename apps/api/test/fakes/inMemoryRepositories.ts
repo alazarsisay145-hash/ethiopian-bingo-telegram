@@ -2,9 +2,9 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { AppError, ErrorCode, patternIdSchema } from '@bingo/shared';
 import { GAME_STATUS_TRANSITIONS } from '../../src/domain/entities.js';
-import type { Claim, Game, GameEvent, GamePlayer, LedgerEntry, Room, User, Wallet } from '../../src/domain/entities.js';
+import type { AuditLog, Claim, Game, GameEvent, GamePlayer, LedgerEntry, Room, User, Wallet } from '../../src/domain/entities.js';
 import type {
-  ClaimRepository, GameEventRepository, GameFence, GamePlayerRepository, GameRepository,
+  AuditLogRepository, ClaimRepository, GameEventRepository, GameFence, GamePlayerRepository, GameRepository,
   LedgerRepository, RoomRepository, UserRepository,
 } from '../../src/domain/repositories.js';
 import type { Clock } from '../../src/domain/ports.js';
@@ -47,6 +47,7 @@ export function createInMemoryRepositories(clock: Clock = { now: () => new Date(
   const eventRows = new Map<string, GameEvent[]>();
   const claimRows = new Map<string, Claim>();
   const ledgerRows = new Map<string, LedgerEntry>();
+  const auditRows = new Map<string, AuditLog>();
   const failures = new Map<string, Error>();
   const key = (gameId: string, userId: string) => `${gameId}:${userId}`;
   const game = (id: string): Game => gameRows.get(uuid.parse(id)) ?? missing('Game not found');
@@ -75,8 +76,8 @@ export function createInMemoryRepositories(clock: Clock = { now: () => new Date(
     async upsertFromTelegram(input) {
       const parsed = z.object({
         telegramId: z.bigint().positive(), firstName: z.string().min(1).max(256),
-        username: z.string().max(256).nullish(), lastName: z.string().max(256).nullish(),
-        photoUrl: z.string().max(2048).nullish(), languageCode: z.string().max(32).nullish(),
+        username: z.string().max(64).nullish(), lastName: z.string().max(256).nullish(),
+        photoUrl: z.string().max(2048).nullish(), languageCode: z.string().max(16).nullish(),
       }).parse(input);
       const existing = [...userRows.values()].find((row) => row.telegramId === parsed.telegramId);
       const profile = {
@@ -289,8 +290,34 @@ export function createInMemoryRepositories(clock: Clock = { now: () => new Date(
         .slice(0, Math.min(200, Math.max(1, Math.trunc(options.limit ?? 50)))));
     },
   };
+  const auditLogs: AuditLogRepository = {
+    async record(input) {
+      const parsed = z.object({
+        actorUserId: uuid.nullish(), action: z.string().min(1).max(100),
+        targetType: z.string().min(1).max(100), targetId: z.string().max(200).nullish(),
+        ip: z.string().max(64).nullish(), requestId: z.string().max(100).nullish(),
+      }).parse(input);
+      const row: AuditLog = {
+        ...parsed, id: randomUUID(), actorUserId: parsed.actorUserId ?? null,
+        targetId: parsed.targetId ?? null, ip: parsed.ip ?? null, requestId: parsed.requestId ?? null,
+        before: clone(input.before ?? null), after: clone(input.after ?? null), createdAt: clock.now(),
+      };
+      fail('auditLogs.record');
+      auditRows.set(row.id, row);
+      return clone(row);
+    },
+    async list(options = {}) {
+      return clone([...auditRows.values()].filter((row) =>
+        (!options.targetType || row.targetType === options.targetType) &&
+        (!options.targetId || row.targetId === options.targetId) &&
+        (!options.before || row.createdAt < options.before))
+        .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime() || b.id.localeCompare(a.id))
+        .slice(0, Math.min(200, Math.max(1, Math.trunc(options.limit ?? 50)))));
+    },
+  };
   return {
-    users, rooms, games, players, events, claims, ledger,
+    users, rooms, games, players, events, claims, ledger, auditLogs,
+    gamePlayers: players, gameEvents: events,
     failNext(operation: string, error = new Error(`Injected ${operation} failure`)) { failures.set(operation, error); },
     setPotMinor(id: string, potMinor: bigint) { z.bigint().nonnegative().max(MAX_INT64).parse(potMinor); game(id).potMinor = potMinor; },
     getWallet(id: string) { return clone(wallets.get(id) ?? null); },

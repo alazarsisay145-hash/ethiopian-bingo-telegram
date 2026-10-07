@@ -26,12 +26,11 @@ export class FirstClaimantRemainderPolicy implements PrizeSplitPolicy {
   ): Array<{ userId: string; amountMinor: bigint }> {
     if (potMinor <= 0n || winnerIds.length === 0) return [];
     const share = potMinor / BigInt(winnerIds.length);
-    let remainder = potMinor % BigInt(winnerIds.length);
-    return winnerIds.map((userId) => {
-      const amountMinor = share + (remainder > 0n ? 1n : 0n);
-      if (remainder > 0n) remainder -= 1n;
-      return { userId, amountMinor };
-    });
+    const remainder = potMinor % BigInt(winnerIds.length);
+    return winnerIds.map((userId, index) => ({
+      userId,
+      amountMinor: share + (index === 0 ? remainder : 0n),
+    }));
   }
 }
 

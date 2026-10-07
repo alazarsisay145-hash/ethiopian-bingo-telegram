@@ -28,6 +28,13 @@ export class ClaimService {
   claim(input: { gameId: string; userId: string }, fence: GameFence): Promise<ClaimResult> {
     return this.lock.runExclusive(`game:${input.gameId}:state`, async () => {
       const game = await this.requireGame(input.gameId);
+      if (game.status !== 'RUNNING') {
+        throw new AppError(
+          ErrorCode.INVALID_STATE,
+          409,
+          'Claims are only allowed while the game is active',
+        );
+      }
       const [player, room, previous, allEvents] = await Promise.all([
         this.players.findByGameAndUser(input.gameId, input.userId),
         this.rooms.findById(game.roomId),
@@ -47,9 +54,6 @@ export class ClaimService {
             (event.payload as { userId?: string }).userId === input.userId,
         );
         if (priorEvent) return this.toResult(input.gameId, input.userId, prior, allEvents);
-        if (game.status !== 'RUNNING') {
-          throw new AppError(ErrorCode.CONFLICT, 409, 'Accepted claim event is unavailable');
-        }
         const leaseValid = await this.ownership.heartbeat(
           {
             gameId: input.gameId,
@@ -78,13 +82,6 @@ export class ClaimService {
       }
       if (prior)
         throw new AppError(ErrorCode.CONFLICT, 409, 'A claim was already rejected for this player');
-      if (game.status !== 'RUNNING') {
-        throw new AppError(
-          ErrorCode.INVALID_STATE,
-          409,
-          'Claims are only allowed while the game is active',
-        );
-      }
       if (!room) throw new AppError(ErrorCode.NOT_FOUND, 404, 'Room not found');
 
       const drawEvents = allEvents.filter((event) => event.type === 'NUMBER_CALLED');

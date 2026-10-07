@@ -181,7 +181,12 @@ export class GameLifecycleService {
           players.map(({ userId, cardNumber, cardCells }) =>
             this.publisher!.publishUser(userId, 'state:snapshot', {
               game: {
-                ...state,
+                gameId: state.gameId,
+                roomId: state.roomId,
+                status: state.status,
+                seq: state.seq,
+                calledNumbers: state.calledNumbers,
+                winnerIds: state.winnerIds,
                 ...(game.seedHash ? { seedHash: game.seedHash } : {}),
                 yourCard: { cardNumber, cells: cardCells },
                 players: state.players.map((player) => ({
