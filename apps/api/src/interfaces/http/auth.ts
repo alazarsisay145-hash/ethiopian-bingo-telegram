@@ -109,7 +109,7 @@ export function rejectIdentityClaims(request: FastifyRequest): void {
     ...(request.user.username ? { username: request.user.username } : {}),
   };
   checkIdentityClaims(request.body, identity, true);
-  checkIdentityClaims(request.query, identity, true, ErrorCode.FORBIDDEN);
+  checkIdentityClaims(request.query, identity, true);
 }
 
 export function requireRole(...roles: UserRole[]): (request: FastifyRequest) => Promise<void> {

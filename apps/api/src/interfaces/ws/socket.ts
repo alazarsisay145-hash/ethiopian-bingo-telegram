@@ -106,8 +106,8 @@ export function attachSocketServer(
       ) {
         throw new AppError(ErrorCode.RATE_LIMITED, 429, 'Too many requests');
       }
-      checkIdentityClaims(auth, socket.data.user, false, ErrorCode.FORBIDDEN);
-      checkIdentityClaims(socket.handshake.query, socket.data.user, false, ErrorCode.FORBIDDEN);
+      checkIdentityClaims(auth, socket.data.user);
+      checkIdentityClaims(socket.handshake.query, socket.data.user);
       checkIdentityHeaders(socket.handshake.headers, socket.data.user);
       if (user.status !== 'ACTIVE') throw new AppError(ErrorCode.FORBIDDEN, 403, 'Access denied');
       socket.data.auth = {
@@ -174,7 +174,7 @@ export function attachSocketServer(
         ) {
           throw new AppError(ErrorCode.RATE_LIMITED, 429, 'Too many requests');
         }
-        checkIdentityClaims(payload, socket.data.user, false, ErrorCode.FORBIDDEN);
+        checkIdentityClaims(payload, socket.data.user);
         const parsed = validate(clientPayloadSchemas[event], payload);
         const handler = handlers[event] as
           | ((input: ClientPayload<ClientEvent>, context: EventContext) => Promise<void>)

@@ -192,7 +192,7 @@ describe('HTTP authentication and authorization', () => {
           headers: { authorization: 'tma proof' },
           payload: claim,
         });
-        expect(result.statusCode).toBe(400);
+        expect(result.statusCode).toBe(403);
       }
       expect(
         (

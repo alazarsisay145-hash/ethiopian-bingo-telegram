@@ -192,8 +192,16 @@ describe('player HTTP API', () => {
         headers: headers(),
         payload: { cardNumber: 1, userId: 'forged-user' },
       });
-      expect(forged.statusCode).toBe(400);
-      expect(forged.json().error.code).toBe(ErrorCode.VALIDATION_ERROR);
+      expect(forged.statusCode).toBe(403);
+      expect(forged.json().error.code).toBe(ErrorCode.FORBIDDEN);
+      const massAssignment = await app.inject({
+        method: 'POST',
+        url: `/api/v1/games/${game.json().gameId}/join`,
+        headers: headers(),
+        payload: { cardNumber: 1, balanceMinor: 999999 },
+      });
+      expect(massAssignment.statusCode).toBe(400);
+      expect(massAssignment.json().error.code).toBe(ErrorCode.VALIDATION_ERROR);
     } finally {
       await app.close();
     }
@@ -214,7 +222,7 @@ describe('player HTTP API', () => {
         headers: headers(),
         payload: { userId: 'another-player' },
       });
-      expect(forgedCreate.statusCode).toBe(400);
+      expect(forgedCreate.statusCode).toBe(403);
       const preview = await app.inject({
         url: `/api/v1/rooms/${room.id}/cards/1`,
         headers: headers(),
@@ -297,7 +305,7 @@ describe('player HTTP API', () => {
         headers: headers(),
         payload: { userId: 'another-player' },
       });
-      expect(forgedLeave.statusCode).toBe(400);
+      expect(forgedLeave.statusCode).toBe(403);
       expect(
         (
           await app.inject({
