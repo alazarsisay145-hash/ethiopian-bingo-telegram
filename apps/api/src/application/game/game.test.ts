@@ -81,11 +81,13 @@ function createDrawHarness() {
       createdAt: new Date(),
     })),
   };
+  const ownership = new InMemoryGameOwnershipLease();
+  void ownership.acquire(game.id, fence.instanceId);
   const service = new DrawService(
     games,
     events,
     claims,
-    new InMemoryGameOwnershipLease(),
+    ownership,
     vault,
     new InMemoryGameLock(),
     settlement as never,
@@ -191,10 +193,10 @@ describe('game state projection', () => {
 
   describe('prize split policy', () => {
     it('splits in integer minor units and gives the remainder to the first accepted claimant', () => {
-      expect(new FirstClaimantRemainderPolicy().split(10n, ['first', 'second', 'third'])).toEqual([
-        { userId: 'first', amountMinor: 4n },
-        { userId: 'second', amountMinor: 3n },
-        { userId: 'third', amountMinor: 3n },
+      expect(new FirstClaimantRemainderPolicy().split(1001n, ['first', 'second', 'third'])).toEqual([
+        { userId: 'first', amountMinor: 335n },
+        { userId: 'second', amountMinor: 333n },
+        { userId: 'third', amountMinor: 333n },
       ]);
     });
   });

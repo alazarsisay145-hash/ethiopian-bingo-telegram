@@ -21,6 +21,7 @@ export class GameRunner {
   private readonly runners = new Map<string, RunnerState>();
   private cancelRecovery?: () => void;
   private recoveryEnabled = false;
+  private shutdownGeneration = 0;
 
   constructor(
     private readonly instanceId: string,
@@ -37,6 +38,7 @@ export class GameRunner {
   ) {}
 
   async start(gameId: string): Promise<boolean> {
+    const generation = this.shutdownGeneration;
     if (this.runners.has(gameId)) return true;
     const game = await this.games.findById(gameId);
     if (!game || (game.status !== 'RUNNING' && game.status !== 'SETTLING')) return false;
@@ -45,6 +47,7 @@ export class GameRunner {
     const lease = await this.ownership.acquire(gameId, this.instanceId, this.leaseTtlMs);
     if (
       !lease ||
+      generation !== this.shutdownGeneration ||
       !(await this.games.tryAcquireOwnership(gameId, lease.instanceId, lease.fencingToken))
     ) {
       if (lease) await this.ownership.release(lease);
@@ -58,6 +61,10 @@ export class GameRunner {
     const lastEvent = (await this.events.listSince(gameId, 0, 1000))
       .filter((event) => event.type === 'NUMBER_CALLED')
       .at(-1);
+    if (generation !== this.shutdownGeneration) {
+      await this.ownership.release(lease);
+      return false;
+    }
     const lastActivityAt = lastEvent?.createdAt ?? game.startedAt ?? this.clock.now();
     const firstDelay = Math.max(
       0,
@@ -85,13 +92,16 @@ export class GameRunner {
   }
 
   async stopAll(): Promise<void> {
+    this.shutdownGeneration += 1;
     this.recoveryEnabled = false;
     this.cancelRecovery?.();
     await Promise.all([...this.runners.keys()].map((gameId) => this.stop(gameId)));
   }
 
   async recover(): Promise<void> {
+    const generation = this.shutdownGeneration;
     const games = await this.games.listRunnable();
+    if (generation !== this.shutdownGeneration) return;
     await Promise.allSettled(games.map(({ id }) => this.start(id)));
   }
 
@@ -148,7 +158,7 @@ export class GameRunner {
             calledNumbers: drawn.calledNumbers,
             seq: event.seq,
           });
-          this.scheduleDraw(gameId, state);
+          if (state.running) this.scheduleDraw(gameId, state);
         })
         .catch(async () => {
           await this.stop(gameId);

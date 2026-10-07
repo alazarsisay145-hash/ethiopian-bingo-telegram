@@ -104,13 +104,15 @@ function createClaimHarness(activePatterns: Room['activePatterns'], withWinningR
       return { claim, event };
     },
   };
+  const ownership = new InMemoryGameOwnershipLease();
+  void ownership.acquire(game.id, 'runner');
   const service = new ClaimService(
     games as never,
     rooms as never,
     players as never,
     events as never,
     claims as never,
-    new InMemoryGameOwnershipLease(),
+    ownership,
     new InMemoryGameLock(),
     new InMemorySeedVault(),
   );
@@ -127,7 +129,6 @@ describe('ClaimService', () => {
         fencingToken: 1n,
       },
     );
-    game.status = 'ENDED';
     const repeated = await service.claim(
       { gameId: game.id, userId: 'user-1' },
       {
@@ -137,6 +138,13 @@ describe('ClaimService', () => {
     );
     expect(first).toMatchObject({ accepted: true, patterns: ['row-1'] });
     expect(repeated).toEqual(first);
+    expect(storedClaims).toHaveLength(1);
+    expect(storedEvents.filter(({ type }) => type === 'CLAIM_ACCEPTED')).toHaveLength(1);
+    game.status = 'ENDED';
+    await expect(service.claim(
+      { gameId: game.id, userId: 'user-1' },
+      { instanceId: 'runner', fencingToken: 1n },
+    )).rejects.toMatchObject({ code: ErrorCode.INVALID_STATE });
     expect(storedClaims).toHaveLength(1);
     expect(storedEvents.filter(({ type }) => type === 'CLAIM_ACCEPTED')).toHaveLength(1);
   });
