@@ -1,9 +1,10 @@
 # Ethiopian Bingo — Telegram Mini App
 
-Server-authoritative 5×5 Bingo foundation. Phase 1 provides real protocol contracts,
-deterministic game rules, Telegram handshake verification, and application shells.
-It does **not** run games, create users, reserve cards, issue JWTs, or maintain wallets.
-Unimplemented intents return an explicit error; there are no demo rooms or balances.
+Server-authoritative 5×5 Bingo backend foundation. It includes deterministic game
+rules, Telegram handshake verification, persistence, and dependency-injected Phase 2
+game lifecycle/draw/claim/runner services. Room/lobby management, funded stakes,
+sessions, and a playable client are not implemented; this project is **not yet
+production-ready**.
 
 ## Prerequisites and setup
 
@@ -15,7 +16,8 @@ Unimplemented intents return an explicit error; there are no demo rooms or balan
 corepack enable
 pnpm install --frozen-lockfile
 cp .env.example .env
-# Fill BOT_TOKEN and a randomly generated JWT_SECRET (at least 32 characters).
+# Fill BOT_TOKEN, a randomly generated JWT_SECRET, and (for production games) a
+# 32-byte hex SEED_ENCRYPTION_KEY.
 # For docker:dev, also set a local POSTGRES_PASSWORD.
 pnpm dev
 ```
@@ -112,7 +114,7 @@ also be reevaluated before production deployment.
 | Phase | Scope                                                                        |
 | ----- | ---------------------------------------------------------------------------- |
 | 1     | Foundation (this project): engine, shared contracts, API/web shells, tooling |
-| 2     | Postgres schema, repositories, migrations, Redis lease (implemented, see docs/DATA_MODEL.md) |
+| 2     | Postgres repositories, Redis fencing, game orchestration services (implemented behind ports) |
 | 3     | Telegram auth sessions, JWTs, persistent profiles                            |
 | 4     | Rooms, membership, atomic card reservations                                  |
 | 5     | Single-owner game loop, claims, authoritative settlement                     |

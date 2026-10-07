@@ -41,7 +41,8 @@ not a durable or revocable session.
 No intent contains a user ID, card cells, called numbers, balance or win result.
 Validated intents reach typed application handlers with the authenticated
 identity. Without a feature handler they receive a structured `NOT_FOUND`;
-Phase 1 never acknowledges a reservation or claim as if it worked.
+`game:ready` remains `NOT_FOUND` until the room/lobby service is implemented.
+Claims derive the user id from the authenticated socket context.
 
 ## Server → client facts
 
@@ -56,14 +57,17 @@ Phase 1 never acknowledges a reservation or claim as if it worked.
 | `state:snapshot`    | `{ game, seq }`                                                |
 | `error`             | `{ error: { code, message, details?, requestId } }`            |
 
-Game state includes `gameId, roomId, status, seq, calledNumbers, seedHash` and
-an optional authenticated recipient's card. It never includes unrevealed seeds,
+Game state uses `waiting | starting | active | finished | cancelled`; the
+internal `SETTLING` database phase is represented as `active`. State includes
+`gameId, roomId, status, seq, calledNumbers`, optional `seedHash`, player
+statuses/winner IDs, and only the authenticated recipient's optional card. It
+never includes unrevealed seeds,
 future draw numbers, or other players' private cards.
 The ended event reveals the entire 75-number permutation for fairness checks.
 Payout/ledger DTOs will be added with the wallet phase, not fabricated here.
 
 Sequences increase within a game; room and wallet events use separate scopes.
 On a gap, clients stop applying game events and send `state:resync`. An
-authorized snapshot replaces their projection at its reported sequence.
-Reconnection requires a fresh snapshot; replay persistence and membership
-checks belong to the future application adapter.
+authorized snapshot replaces their projection at its reported sequence. Resync
+requires game membership and replays at most 100 events; gaps or larger ranges
+return a personalized snapshot instead.

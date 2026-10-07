@@ -2,6 +2,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import { AppError, ErrorCode, telegramUserSchema } from '@bingo/shared';
 import type { z } from 'zod';
 import type { AuthenticationPort, UserProfile } from '../../domain/ports.js';
+import type { UserRepository } from '../../domain/repositories.js';
 
 export interface InitDataOptions {
   maxAgeSeconds?: number;
@@ -55,10 +56,30 @@ export function verifyTelegramInitData(
 }
 
 export class TelegramAuthentication implements AuthenticationPort {
-  constructor(private readonly botToken: string, private readonly options: InitDataOptions = {}) {}
+  constructor(
+    private readonly botToken: string,
+    private readonly options: InitDataOptions = {},
+    private readonly users?: UserRepository,
+  ) {}
 
   async authenticate(initData: string): Promise<UserProfile> {
     const user = verifyTelegramInitData(initData, this.botToken, this.options);
+    if (this.users) {
+      const profile = await this.users.upsertFromTelegram({
+        telegramId: BigInt(user.id),
+        username: user.username,
+        firstName: user.first_name,
+        lastName: user.last_name,
+        photoUrl: user.photo_url,
+        languageCode: user.language_code,
+      });
+      return {
+        id: profile.id,
+        telegramId: user.id,
+        firstName: profile.firstName,
+        ...(profile.username ? { username: profile.username } : {}),
+      };
+    }
     return {
       id: `telegram:${user.id}`,
       telegramId: user.id,

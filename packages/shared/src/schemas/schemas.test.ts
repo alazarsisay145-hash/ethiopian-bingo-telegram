@@ -20,7 +20,7 @@ const room = { id: 'room-1', name: 'Room', stakeMinor: 100, cardPoolSize: 200, s
 const game = {
   gameId: 'game-1',
   roomId: 'room-1',
-  status: 'running',
+  status: 'active',
   seq: 1,
   calledNumbers: [1],
   seedHash,
@@ -60,6 +60,12 @@ describe('public model contracts', () => {
         seq: 2,
       }).success,
     ).toBe(true);
+  });
+  it('accepts product game statuses and rejects persisted enum names', () => {
+    for (const status of ['waiting', 'starting', 'active', 'finished', 'cancelled']) {
+      expect(gameStateSchema.safeParse({ ...game, status }).success).toBe(true);
+    }
+    expect(gameStateSchema.safeParse({ ...game, status: 'running' }).success).toBe(false);
   });
   it('rejects invalid identity, negative stake and internal game secrets', () => {
     expect(userProfileSchema.safeParse({ id: 'u', telegramId: -1, firstName: 'P' }).success).toBe(

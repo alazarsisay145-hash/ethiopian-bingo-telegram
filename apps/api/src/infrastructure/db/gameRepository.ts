@@ -1,9 +1,10 @@
 import { z } from 'zod';
-import type { Game, GameStatus } from '../../domain/entities.js';
+import { Prisma } from '@prisma/client';
+import type { Game, GameEvent, GameStatus } from '../../domain/entities.js';
 import { GAME_STATUS_TRANSITIONS } from '../../domain/entities.js';
 import type { GameFence, GameRepository, RevealedSeed } from '../../domain/repositories.js';
 import type { Db } from './prisma.js';
-import { conflict, isForeignKeyViolation, isUuid, notFound, requireUuid } from './errors.js';
+import { conflict, isForeignKeyViolation, isUniqueViolation, isUuid, notFound, requireUuid } from './errors.js';
 
 const ACTIVE: GameStatus[] = ['LOBBY', 'STARTING', 'RUNNING', 'SETTLING'];
 // The secret seed is omitted from every query that returns a `Game`.
@@ -27,6 +28,7 @@ export class PrismaGameRepository implements GameRepository {
       return await this.db.game.create({ data: { roomId: input.roomId }, omit: omitSecret });
     } catch (error) {
       if (isForeignKeyViolation(error)) throw notFound('Room');
+      if (isUniqueViolation(error)) throw conflict('Room already has an active game');
       throw error;
     }
   }
@@ -39,6 +41,14 @@ export class PrismaGameRepository implements GameRepository {
     if (!isUuid(roomId)) return null;
     return this.db.game.findFirst({
       where: { roomId, status: { in: ACTIVE } }, orderBy: { createdAt: 'desc' }, omit: omitSecret,
+    });
+  }
+
+  async listRunnable(): Promise<Game[]> {
+    return this.db.game.findMany({
+      where: { status: { in: ['RUNNING', 'SETTLING'] } },
+      orderBy: { createdAt: 'asc' },
+      omit: omitSecret,
     });
   }
 
@@ -80,6 +90,54 @@ export class PrismaGameRepository implements GameRepository {
       if (!(await this.db.game.count({ where: { id: gameId } }))) throw notFound('Game');
       throw conflict('Seed commitment already set or game already started');
     }
+  }
+
+  async getSeedCommitment(gameId: string): Promise<{ seedHash: string; seedEncrypted: string } | null> {
+    requireUuid(gameId, 'gameId');
+    const game = await this.db.game.findUnique({
+      where: { id: gameId },
+      select: { seedHash: true, seedEncrypted: true },
+    });
+    return game?.seedHash && game.seedEncrypted
+      ? { seedHash: game.seedHash, seedEncrypted: game.seedEncrypted }
+      : null;
+  }
+
+  async finalize(gameId: string, payload: unknown, fence: GameFence): Promise<GameEvent> {
+    requireUuid(gameId, 'gameId');
+    if (payload === undefined) throw conflict('Final event payload is required');
+    const eventPayload = payload === null ? Prisma.JsonNull : (payload as Prisma.InputJsonValue);
+    return this.db.$transaction(async (tx) => {
+      const rows = await tx.$queryRaw<{ seq: number }[]>`
+        UPDATE games SET status = 'ENDED', ended_at = now(),
+          seed_revealed_at = COALESCE(seed_revealed_at, now()),
+          current_seq = current_seq + 1, updated_at = now()
+        WHERE id = ${gameId}::uuid AND status = 'SETTLING'
+          AND owner_instance_id = ${fence.instanceId} AND fencing_token = ${fence.fencingToken}
+        RETURNING current_seq AS seq`;
+      const seq = rows[0]?.seq;
+      if (seq === undefined) {
+        const current = await tx.game.findUnique({
+          where: { id: gameId },
+          select: { status: true, ownerInstanceId: true, fencingToken: true },
+        });
+        if (!current) throw notFound('Game');
+        if (current.ownerInstanceId !== fence.instanceId || current.fencingToken !== fence.fencingToken) {
+          throw conflict('Stale game owner');
+        }
+        if (current.status === 'ENDED') {
+          const existing = await tx.gameEvent.findFirst({
+            where: { gameId, type: 'GAME_ENDED' },
+            orderBy: { seq: 'desc' },
+          });
+          if (existing) return existing;
+        }
+        throw conflict(`Cannot finalize game from ${current.status}`);
+      }
+      return tx.gameEvent.create({
+        data: { gameId, seq, type: 'GAME_ENDED', payload: eventPayload },
+      });
+    });
   }
 
   async revealSeed(gameId: string): Promise<RevealedSeed> {

@@ -12,6 +12,10 @@ export const envSchema = z.object({
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
   BOT_TOKEN: z.string().trim().min(1),
   JWT_SECRET: z.string().min(32),
+  SEED_ENCRYPTION_KEY: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().regex(/^[a-f\d]{64}$/i).optional(),
+  ),
   DATABASE_URL: optionalUrl,
   REDIS_URL: optionalUrl,
   CORS_ORIGINS: z.string().default('').transform((value) =>
@@ -25,6 +29,14 @@ export const envSchema = z.object({
   ).pipe(z.array(z.string().regex(/^[1-9]\d*$/).transform(Number).pipe(
     z.number().int().positive().safe(),
   ))),
+}).superRefine((env, context) => {
+  if (env.NODE_ENV === 'production' && !env.SEED_ENCRYPTION_KEY) {
+    context.addIssue({
+      code: 'custom',
+      path: ['SEED_ENCRYPTION_KEY'],
+      message: 'SEED_ENCRYPTION_KEY is required in production',
+    });
+  }
 });
 
 export type Env = z.infer<typeof envSchema>;

@@ -19,7 +19,7 @@ export function attachSocketServer(
   server: HttpServer,
   options: {
     authentication: AuthenticationPort;
-    handlers: ApplicationEventHandlers;
+    handlers: ApplicationEventHandlers | ((io: BingoSocketServer) => ApplicationEventHandlers);
     origins: string[];
     logger: Pick<Logger, 'error'>;
   },
@@ -32,6 +32,7 @@ export function attachSocketServer(
       callback(null, origin === undefined || options.origins.includes(origin));
     },
   });
+  const handlers = typeof options.handlers === 'function' ? options.handlers(io) : options.handlers;
   io.use((socket, next) => {
     const authenticate = async (): Promise<void> => {
       const auth: unknown = socket.handshake.auth;
@@ -48,6 +49,7 @@ export function attachSocketServer(
     });
   });
   io.on('connection', (socket: BingoSocket) => {
+    void socket.join(`user:${socket.data.user.id}`);
     // Transport arguments are untrusted even when the shared client interface is typed.
     const transport = socket as Socket;
     const execute = async (event: ClientEvent, payload: unknown, acknowledge: unknown): Promise<void> => {
@@ -55,7 +57,7 @@ export function attachSocketServer(
       const ack: Ack | undefined = typeof acknowledge === 'function' ? acknowledge as Ack : undefined;
       try {
         const parsed = validate(clientPayloadSchemas[event], payload);
-        const handler = options.handlers[event] as
+        const handler = handlers[event] as
           ((input: ClientPayload<ClientEvent>, context: EventContext) => Promise<void>) | undefined;
         if (!handler) throw new AppError(ErrorCode.NOT_FOUND, 404, `Unsupported event: ${event}`);
         await handler(parsed, { user: socket.data.user, socketId: socket.id, requestId });

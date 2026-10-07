@@ -110,7 +110,7 @@ export function createSessionStore() {
       update.game = {
         gameId: game.gameId,
         roomId: game.roomId,
-        status: 'running',
+        status: 'active',
         seq: game.seq,
         seedHash: game.seedHash,
         calledNumbers: [],
@@ -137,7 +137,7 @@ export function createSessionStore() {
         update.game = { ...state.game, seq: payload.seq };
       } else if (event === 'game:ended') {
         update.ended = payload as Payload<'game:ended'>;
-        update.game = { ...state.game, status: 'ended', seq: payload.seq };
+        update.game = { ...state.game, status: 'finished', seq: payload.seq };
       }
     }
     store.setState(update);

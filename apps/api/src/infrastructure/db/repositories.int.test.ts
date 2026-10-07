@@ -55,6 +55,14 @@ describe.skipIf(!enabled)('Postgres repositories', () => {
   });
 
   describe('rooms and games', () => {
+    it('enforces one non-terminal game per room in the database', async () => {
+      const game = await fx.newGame();
+      await rejects(repos.games.create({ roomId: game.roomId }), ErrorCode.CONFLICT);
+      await repos.games.updateStatus(game.id, 'CANCELLED');
+      const replacement = await repos.games.create({ roomId: game.roomId });
+      expect(replacement.status).toBe('LOBBY');
+    });
+
     it('never exposes secrets and enforces the game state machine and seed lifecycle', async () => {
       const game = await fx.newGame();
       const room = await repos.rooms.findById(game.roomId);
@@ -100,6 +108,30 @@ describe.skipIf(!enabled)('Postgres repositories', () => {
       expect((await repos.gameEvents.append({ gameId: game.id, type: 'x', payload: {}, fence: current })).seq).toBe(1);
       expect((await repos.games.updateStatus(game.id, 'STARTING', current)).status).toBe('STARTING');
       expect(await repos.gameEvents.latestSeq(game.id)).toBe(1);
+    });
+
+    it('atomically finalizes the game and appends exactly one GAME_ENDED event', async () => {
+      const game = await fx.newGame();
+      const owner = { instanceId: 'settlement-owner', fencingToken: 1n };
+      await repos.games.tryAcquireOwnership(game.id, owner.instanceId, owner.fencingToken);
+      await repos.games.setSeedCommitment(game.id, { seedHash: 'hash', seedEncrypted: 'encrypted' });
+      await repos.games.updateStatus(game.id, 'STARTING', owner);
+      await repos.games.updateStatus(game.id, 'RUNNING', owner);
+      await repos.games.updateStatus(game.id, 'SETTLING', owner);
+
+      const payload = { winnerIds: [], seedRevealed: 'seed', drawSequence: [4, 7, 2] };
+      const events = await Promise.all([
+        repos.games.finalize(game.id, payload, owner),
+        repos.games.finalize(game.id, payload, owner),
+      ]);
+
+      expect(events[0]).toEqual(events[1]);
+      expect(events[0]?.type).toBe('GAME_ENDED');
+      expect(events[0]?.seq).toBe(1);
+      expect((await repos.games.findById(game.id))?.status).toBe('ENDED');
+      expect(await repos.gameEvents.latestSeq(game.id)).toBe(1);
+      expect(await db.gameEvent.count({ where: { gameId: game.id, type: 'GAME_ENDED' } })).toBe(1);
+      expect((await repos.games.revealSeed(game.id)).seedRevealedAt).not.toBeNull();
     });
   });
 
@@ -158,6 +190,27 @@ describe.skipIf(!enabled)('Postgres repositories', () => {
       await rejects(repos.gameEvents.append({ gameId: '00000000-0000-4000-8000-000000000000', type: 'x', payload: {} }), ErrorCode.NOT_FOUND);
     });
 
+    it('allows only one concurrent append for the same expected draw index', async () => {
+      const game = await fx.newGame();
+      const owner = { instanceId: 'draw-owner', fencingToken: 1n };
+      expect(await repos.games.tryAcquireOwnership(game.id, owner.instanceId, owner.fencingToken)).toBe(true);
+      await repos.games.updateStatus(game.id, 'STARTING', owner);
+      await repos.games.updateStatus(game.id, 'RUNNING', owner);
+      const results = await Promise.allSettled(Array.from({ length: 12 }, (_, index) =>
+        repos.gameEvents.append({
+          gameId: game.id,
+          type: 'NUMBER_CALLED',
+          payload: { number: index + 1, index: 0 },
+          fence: owner,
+          expectedDrawIndex: 0,
+          expectedStatus: 'RUNNING',
+        })));
+      expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+      expect(results.filter((result) => result.status === 'rejected')).toHaveLength(11);
+      expect(await db.gameEvent.count({ where: { gameId: game.id, type: 'NUMBER_CALLED' } })).toBe(1);
+      expect(await repos.gameEvents.latestSeq(game.id)).toBe(1);
+    });
+
     it('is append-only at the database level', async () => {
       const game = await fx.newGame();
       await repos.gameEvents.append({ gameId: game.id, type: 'a', payload: null });
@@ -167,12 +220,44 @@ describe.skipIf(!enabled)('Postgres repositories', () => {
   });
 
   describe('claims and audit log', () => {
+    it('atomically stores one fenced claim, disqualification, and claim event', async () => {
+      const game = await fx.newGame();
+      const user = await fx.newUser();
+      const owner = { instanceId: 'claim-owner', fencingToken: 1n };
+      await repos.games.tryAcquireOwnership(game.id, owner.instanceId, owner.fencingToken);
+      await repos.games.updateStatus(game.id, 'STARTING', owner);
+      await repos.games.updateStatus(game.id, 'RUNNING', owner);
+      await repos.gamePlayers.reserveCard({
+        gameId: game.id, userId: user.id, cardNumber: 1, cardCells: cells(),
+      });
+      const stored = await repos.claims.recordWithEvent({
+        gameId: game.id, userId: user.id, atSeq: 0, accepted: false, patterns: [],
+        disqualifyOnFalseClaim: true,
+      }, owner);
+      expect(stored.event.seq).toBe(1);
+      expect((await repos.gamePlayers.findByGameAndUser(game.id, user.id))?.status).toBe('DISQUALIFIED');
+      await rejects(repos.claims.recordWithEvent({
+        gameId: game.id, userId: user.id, atSeq: 0, accepted: false, patterns: [],
+        disqualifyOnFalseClaim: true,
+      }, owner), ErrorCode.CONFLICT);
+      expect(await repos.gameEvents.latestSeq(game.id)).toBe(1);
+      expect(await repos.claims.listByGame(game.id)).toHaveLength(1);
+      await rejects(repos.claims.recordWithEvent({
+        gameId: game.id, userId: user.id, atSeq: 0, accepted: true, patterns: ['row-1'],
+        disqualifyOnFalseClaim: true,
+      }, { instanceId: owner.instanceId, fencingToken: 0n }), ErrorCode.CONFLICT);
+      expect(await repos.gameEvents.latestSeq(game.id)).toBe(1);
+    });
+
     it('records claims and audit entries', async () => {
       const game = await fx.newGame();
       const user = await fx.newUser();
       await repos.claims.record({ gameId: game.id, userId: user.id, atSeq: 5, accepted: false, patterns: [] });
-      await repos.claims.record({ gameId: game.id, userId: user.id, atSeq: 9, accepted: true, patterns: ['row-1'] });
-      expect((await repos.claims.listByGame(game.id)).map((c) => c.atSeq)).toEqual([5, 9]);
+      await rejects(
+        repos.claims.record({ gameId: game.id, userId: user.id, atSeq: 9, accepted: true, patterns: ['row-1'] }),
+        ErrorCode.CONFLICT,
+      );
+      expect((await repos.claims.listByGame(game.id)).map((c) => c.atSeq)).toEqual([5]);
       const audit = await repos.auditLogs.record({
         actorUserId: user.id, action: 'room.update', targetType: 'room', targetId: game.roomId,
         before: { a: 1 }, after: { a: 2 }, requestId: 'req-1',

@@ -70,6 +70,7 @@ export interface GameRepository {
   findById(id: string): Promise<Game | null>;
   /** Latest non-terminal (LOBBY/STARTING/RUNNING/SETTLING) game of the room. */
   findActiveByRoom(roomId: string): Promise<Game | null>;
+  listRunnable(): Promise<Game[]>;
   /** Validates the transition atomically; stale fences throw `CONFLICT`. */
   updateStatus(gameId: string, status: GameStatus, fence?: GameFence): Promise<Game>;
   /** Stores the commitment once (before the game starts); later calls throw `CONFLICT`. */
@@ -77,6 +78,9 @@ export interface GameRepository {
     gameId: string,
     input: { seedHash: string; seedEncrypted: string },
   ): Promise<void>;
+  getSeedCommitment(gameId: string): Promise<{ seedHash: string; seedEncrypted: string } | null>;
+  /** Atomically transitions SETTLING to ENDED, reveals the seed, and appends GAME_ENDED. */
+  finalize(gameId: string, payload: unknown, fence: GameFence): Promise<GameEvent>;
   /** Marks the seed revealed; only allowed for ENDED/CANCELLED games. Idempotent. */
   revealSeed(gameId: string): Promise<RevealedSeed>;
   /**
@@ -103,7 +107,8 @@ export interface GamePlayerRepository {
   }): Promise<ReserveCardResult>;
   listByGame(gameId: string): Promise<GamePlayer[]>;
   findByGameAndUser(gameId: string, userId: string): Promise<GamePlayer | null>;
-  setStatus(gameId: string, userId: string, status: GamePlayerStatus): Promise<GamePlayer>;
+  remove(gameId: string, userId: string): Promise<void>;
+  setStatus(gameId: string, userId: string, status: GamePlayerStatus, fence?: GameFence): Promise<GamePlayer>;
 }
 
 export interface GameEventRepository {
@@ -113,6 +118,8 @@ export interface GameEventRepository {
     type: string;
     payload: unknown;
     fence?: GameFence;
+    expectedDrawIndex?: number;
+    expectedStatus?: GameStatus;
   }): Promise<GameEvent>;
   listSince(gameId: string, afterSeq: number, limit: number): Promise<GameEvent[]>;
   latestSeq(gameId: string): Promise<number>;
@@ -125,7 +132,15 @@ export interface ClaimRepository {
     atSeq: number;
     accepted: boolean;
     patterns: string[];
-  }): Promise<Claim>;
+  }, fence?: GameFence): Promise<Claim>;
+  recordWithEvent(input: {
+    gameId: string;
+    userId: string;
+    atSeq: number;
+    accepted: boolean;
+    patterns: string[];
+    disqualifyOnFalseClaim: boolean;
+  }, fence: GameFence): Promise<{ claim: Claim; event: GameEvent }>;
   listByGame(gameId: string): Promise<Claim[]>;
 }
 
