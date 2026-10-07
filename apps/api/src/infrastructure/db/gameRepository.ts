@@ -44,6 +44,51 @@ export class PrismaGameRepository implements GameRepository {
     });
   }
 
+  listByStatus(statuses: GameStatus[]): Promise<Game[]> {
+    return this.db.game.findMany({
+      where: { status: { in: statuses } },
+      orderBy: { createdAt: 'asc' },
+      omit: omitSecret,
+    });
+  }
+
+  async lockForUpdate(gameId: string): Promise<Game | null> {
+    requireUuid(gameId, 'gameId');
+    const rows = await this.db.$queryRaw<{ id: string }[]>`
+      SELECT id FROM games WHERE id = ${gameId}::uuid FOR UPDATE`;
+    return rows.length ? this.findById(gameId) : null;
+  }
+
+  async adjustPotMinor(gameId: string, deltaMinor: bigint): Promise<Game> {
+    requireUuid(gameId, 'gameId');
+    const rows = await this.db.$queryRaw<{ id: string }[]>`
+      UPDATE games SET pot_minor = pot_minor + ${deltaMinor}, updated_at = now()
+      WHERE id = ${gameId}::uuid AND status IN ('LOBBY', 'STARTING', 'CANCELLED')
+        AND pot_minor + ${deltaMinor} >= 0
+      RETURNING id::text AS id`;
+    if (!rows.length) {
+      if (!(await this.db.game.count({ where: { id: gameId } }))) throw notFound('Game');
+      throw conflict('Game pot cannot be changed in its current state');
+    }
+    return this.db.game.findUniqueOrThrow({ where: { id: gameId }, omit: omitSecret });
+  }
+
+  async setStartingAt(gameId: string, startingAt: Date | null): Promise<Game | null> {
+    requireUuid(gameId, 'gameId');
+    const result = await this.db.game.updateMany({
+      where: {
+        id: gameId,
+        status: startingAt ? 'LOBBY' : 'STARTING',
+        startingAt: startingAt ? null : { not: null },
+      },
+      data: startingAt
+        ? { status: 'STARTING', startingAt }
+        : { status: 'LOBBY', startingAt: null },
+    });
+    if (!result.count) return null;
+    return this.db.game.findUnique({ where: { id: gameId }, omit: omitSecret });
+  }
+
   async listRunnable(): Promise<Game[]> {
     return this.db.game.findMany({
       where: { status: { in: ['RUNNING', 'SETTLING'] } },
@@ -63,8 +108,8 @@ export class PrismaGameRepository implements GameRepository {
       },
       data: {
         status,
-        ...(status === 'RUNNING' ? { startedAt: now } : {}),
-        ...(status === 'ENDED' || status === 'CANCELLED' ? { endedAt: now } : {}),
+        ...(status === 'RUNNING' ? { startedAt: now, startingAt: null } : {}),
+        ...(status === 'ENDED' || status === 'CANCELLED' ? { endedAt: now, startingAt: null } : {}),
       },
     });
     if (result.count === 0) {

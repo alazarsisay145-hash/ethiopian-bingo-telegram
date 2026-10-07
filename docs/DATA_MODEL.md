@@ -10,24 +10,27 @@ timestamps are `timestamptz`. Apply with `pnpm db:migrate`.
 | `users`        | Telegram identity (`telegram_id` unique), role (`PLAYER/ADMIN/SUPER_ADMIN`), status       |
 | `wallets`      | One per user; `balance_minor` (CHECK ≥ 0), `currency`, `version` for optimistic locking   |
 | `ledger_entries` | Append-only signed money movements; unique `idempotency_key`; index `(user_id, created_at)` |
-| `rooms`        | Stake, player bounds, draw interval, `active_patterns`, card pool size, secret `card_pool_seed` |
-| `games`        | Status machine, seed commitment (`seed_hash`, secret `seed_encrypted`), owner, `fencing_token`, `current_seq`, pot |
+| `rooms`        | Stake, player bounds, draw interval, `start_countdown_ms`, `active_patterns`, card pool size, secret `card_pool_seed` |
+| `games`        | Status machine, persisted `starting_at`, seed commitment (`seed_hash`, secret `seed_encrypted`), owner, `fencing_token`, `current_seq`, pot |
 | `game_players` | Card ownership: `card_number`, 25 `card_cells`; PK/unique `(game_id, user_id)`, unique `(game_id, card_number)` |
 | `game_events`  | Authoritative ordered event stream; PK `(game_id, seq)`; append-only                      |
 | `claims`       | One Bingo claim per game/player with its verdict (`accepted`, `patterns`, `at_seq`)          |
 | `audit_logs`   | Admin/system audit trail with before/after JSON                                          |
 
-The Phase 2 migration `20261007130000_unique_active_game_per_room` adds a partial
+The migration `20261007130000_unique_active_game_per_room` adds a partial
 unique index on `games(room_id)` for statuses other than `ENDED` and `CANCELLED`.
 This closes the race in which concurrent game creation could leave one room with
 multiple active games. Product-facing statuses map to the Prisma enum; `SETTLING`
 is an internal phase of public `active`.
+Migration `20261007140000_lobby_countdown` adds a default 15-second room
+countdown and the game's durable `starting_at` timestamp. Countdown work is
+recovered by the lobby scheduler and protected by the game ownership lease.
 
 ## Which constraint enforces which server-authority rule
 
 | Rule                                   | Enforcement                                                                                         |
 | -------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| One owner per card in a game           | `UNIQUE (game_id, card_number)`; `reserveCard` is a single INSERT and maps the unique violation to `card_taken` (no read-then-write) |
+| One owner per card in a game           | `UNIQUE (game_id, card_number)`; `reserveCard` uses `INSERT … ON CONFLICT DO NOTHING` and maps conflicts to `card_taken` |
 | One card per user per game             | `PRIMARY KEY (game_id, user_id)`; mapped to `already_joined`                                         |
 | One claim per player per game          | `UNIQUE (game_id, user_id)`; repeated claims are idempotent or conflict in the application           |
 | Cards are exactly 25 cells             | `CHECK (array_length(card_cells,1) = 25)` plus server-side Zod validation; cells are only written by server code |
@@ -53,12 +56,20 @@ validates and persists.
 release (compare-and-delete) are in `infrastructure/redis/gameOwnershipLease.ts`. The lease selects
 an owner; Postgres fencing is what makes stale writers harmless.
 
+## Transactional lobby operations
+
+- `UnitOfWork.withTransaction` creates a transactional repository set. Joining
+  locks the game and user rows, reserves the server-generated card, applies the
+  idempotent stake debit, updates the pot, appends the lobby event, and records
+  audit data atomically. A failed step rolls back all earlier writes.
+- Leave and cancellation apply idempotent refunds and update membership/pot in
+  the same transaction. Prize ledger writes remain protected by their own
+  transaction and idempotency keys.
+
 ## Known limits (later phases)
 
-- No unit-of-work: composing a stake debit with `reserveCard` in one transaction is deferred to the
-  rooms/game services; the current game pot is not funded automatically.
 - AES-256-GCM seed encryption is implemented behind `SeedVault`; production key
   provisioning, rotation, backup and KMS integration remain operational work.
-- Room membership/lobby management, persistent auth sessions, admin tools, payment
-  integration, client UI, and deployment/runbooks remain future work. Socket.IO
-  game events use per-user rooms with Redis pub/sub across API instances.
+- Persistent auth sessions, payment integration, client UI, admin UI, and
+  deployment/runbooks remain future work. Socket.IO user and room events use
+  Redis pub/sub across API instances.

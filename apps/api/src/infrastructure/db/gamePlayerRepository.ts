@@ -4,7 +4,7 @@ import type { GamePlayer, GamePlayerStatus } from '../../domain/entities.js';
 import type { GameFence, GamePlayerRepository, ReserveCardResult } from '../../domain/repositories.js';
 import type { Db } from './prisma.js';
 import {
-  isForeignKeyViolation, isRecordNotFound, isUniqueViolation, isUuid, notFound, requireUuid,
+  isForeignKeyViolation, isRecordNotFound, isUuid, notFound, requireUuid,
 } from './errors.js';
 
 const reserveSchema = z.object({
@@ -25,11 +25,15 @@ export class PrismaGamePlayerRepository implements GamePlayerRepository {
   }): Promise<ReserveCardResult> {
     const data = reserveSchema.parse(input);
     try {
-      const player = await this.db.gamePlayer.create({ data });
-      return { kind: 'reserved', player };
+      const result = await this.db.gamePlayer.createMany({ data: [data], skipDuplicates: true });
+      if (result.count === 1) {
+        const player = await this.findByGameAndUser(data.gameId, data.userId);
+        if (!player) throw new AppError(ErrorCode.INTERNAL, 500, 'Reserved card was not persisted');
+        return { kind: 'reserved', player };
+      }
     } catch (error) {
       if (isForeignKeyViolation(error)) throw notFound('Game or user');
-      if (!isUniqueViolation(error)) throw error;
+      throw error;
     }
     // A unique constraint rejected the insert: either this user already holds a card
     // in the game, or somebody else holds the requested card number.
@@ -40,6 +44,16 @@ export class PrismaGamePlayerRepository implements GamePlayerRepository {
   listByGame(gameId: string): Promise<GamePlayer[]> {
     if (!isUuid(gameId)) return Promise.resolve([]);
     return this.db.gamePlayer.findMany({ where: { gameId }, orderBy: { cardNumber: 'asc' } });
+  }
+
+  listByUser(userId: string, statuses: import('../../domain/entities.js').GameStatus[] = [
+    'LOBBY', 'STARTING', 'RUNNING', 'SETTLING',
+  ]): Promise<GamePlayer[]> {
+    if (!isUuid(userId)) return Promise.resolve([]);
+    return this.db.gamePlayer.findMany({
+      where: { userId, game: { status: { in: statuses } } },
+      orderBy: { joinedAt: 'asc' },
+    });
   }
 
   async findByGameAndUser(gameId: string, userId: string): Promise<GamePlayer | null> {

@@ -6,6 +6,7 @@ import type {
   GamePlayerRepository,
   GameRepository,
   RoomRepository,
+  AuditLogRepository,
 } from '../../domain/repositories.js';
 import { DrawService } from './drawService.js';
 
@@ -35,6 +36,7 @@ export class GameRunner {
     private readonly clock: Clock,
     private readonly scheduler: Scheduler,
     private readonly leaseTtlMs = 10_000,
+    private readonly auditLogs?: AuditLogRepository,
   ) {}
 
   async start(gameId: string): Promise<boolean> {
@@ -52,6 +54,21 @@ export class GameRunner {
     ) {
       if (lease) await this.ownership.release(lease);
       return false;
+    }
+    if (game.ownerInstanceId && (
+      game.ownerInstanceId !== lease.instanceId || game.fencingToken < lease.fencingToken
+    )) {
+      await this.auditLogs?.record({
+        action: 'GAME_LEASE_TAKEOVER',
+        targetType: 'game',
+        targetId: gameId,
+        after: {
+          previousInstanceId: game.ownerInstanceId,
+          previousFence: game.fencingToken.toString(),
+          instanceId: lease.instanceId,
+          fencingToken: lease.fencingToken.toString(),
+        },
+      });
     }
     const commitment = await this.games.getSeedCommitment(gameId);
     if (!commitment) {

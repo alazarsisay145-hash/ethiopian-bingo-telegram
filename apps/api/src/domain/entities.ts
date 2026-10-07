@@ -68,6 +68,7 @@ export interface Room {
   drawIntervalMs: number;
   activePatterns: WinPatternId[];
   cardPoolSize: number;
+  startCountdownMs?: number;
   status: RoomStatus;
   createdById: string | null;
   createdAt: Date;
@@ -81,6 +82,7 @@ export interface Game {
   seedHash: string | null;
   seedRevealedAt: Date | null;
   startedAt: Date | null;
+  startingAt?: Date | null;
   endedAt: Date | null;
   ownerInstanceId: string | null;
   fencingToken: bigint;

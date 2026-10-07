@@ -3,6 +3,8 @@ import type { Env } from '../config/env.js';
 import type { DependencyProbes } from '../domain/ports.js';
 import { createPrismaClient } from './db/prisma.js';
 import { createRepositories, type Repositories } from './db/index.js';
+import { PrismaUnitOfWork } from './db/unitOfWork.js';
+import type { UnitOfWork } from '../domain/ports.js';
 import type { Db } from './db/prisma.js';
 import type { RedisClient } from './redis/client.js';
 import { PostgresProbe } from './db/probe.js';
@@ -12,6 +14,7 @@ import { RedisProbe } from './redis/probe.js';
 export interface Infrastructure {
   probes: DependencyProbes;
   repositories?: Repositories;
+  unitOfWork?: UnitOfWork;
   db?: Db;
   redis?: RedisClient;
   close(): Promise<void>;
@@ -46,7 +49,11 @@ export function createInfrastructure(
   }
   return {
     probes,
-    ...(db ? { db, repositories: createRepositories(db) } : {}),
+    ...(db ? {
+      db,
+      repositories: createRepositories(db, false, env.ADMIN_TELEGRAM_IDS),
+    } : {}),
+    ...(db ? { unitOfWork: new PrismaUnitOfWork(db) } : {}),
     ...(redis ? { redis } : {}),
     close: async () => { await Promise.allSettled(closers.map((close) => close())); },
   };

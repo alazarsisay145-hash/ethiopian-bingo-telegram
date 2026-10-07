@@ -16,7 +16,8 @@
     "format": "prettier --write .",
     "typecheck": "turbo run typecheck",
     "clean": "turbo run clean && rm -rf .turbo",
-    "docker:dev": "docker compose -f infra/docker/docker-compose.dev.yml up -d"
+    "docker:dev": "docker compose -f infra/docker/docker-compose.dev.yml up -d",
+    "db:seed": "pnpm --filter @bingo/api db:seed"
   },
   "devDependencies": {
     "@eslint/js": "9.39.1",

@@ -11,6 +11,8 @@ import type {
   LedgerRepository,
 } from '../../domain/repositories.js';
 import type { SeedVault } from '../../domain/ports.js';
+import type { GameEventPublisher } from '../../domain/ports.js';
+import type { AuditLogRepository } from '../../domain/repositories.js';
 
 export interface PrizeSplitPolicy {
   split(
@@ -45,6 +47,8 @@ export class GameSettlementService {
     private readonly vault: SeedVault,
     private readonly splitPolicy: PrizeSplitPolicy = new FirstClaimantRemainderPolicy(),
     private readonly leaseTtlMs = 10_000,
+    private readonly auditLogs?: AuditLogRepository,
+    private readonly publisher?: GameEventPublisher,
   ) {}
 
   async finish(gameId: string, winnerIds: string[], fence: GameFence): Promise<GameEvent> {
@@ -112,13 +116,29 @@ export class GameSettlementService {
           refId: gameId,
           idempotencyKey: `game:${gameId}:prize:${userId}`,
         });
+        await this.auditLogs?.record({
+          action: 'PRIZE_APPLIED',
+          targetType: 'game',
+          targetId: gameId,
+          after: { userId, amountMinor: amountMinor.toString() },
+        });
+        if (this.publisher) {
+          const wallet = await this.ledger.getWallet(userId);
+          if (wallet.balanceMinor <= BigInt(Number.MAX_SAFE_INTEGER)) {
+            await this.publisher.publishUser(userId, 'wallet:update', {
+              balanceMinor: Number(wallet.balanceMinor),
+              currency: 'ETB',
+              seq: wallet.version,
+            });
+          }
+        }
       }
     }
     await this.assertLease(gameId, fence);
     if (game.status === 'ENDED') {
       throw new AppError(ErrorCode.CONFLICT, 409, 'Finished game is missing its final event');
     }
-    return this.games.finalize(
+    const finalEvent = await this.games.finalize(
       gameId,
       {
         winnerIds: resolvedWinners,
@@ -127,6 +147,13 @@ export class GameSettlementService {
       },
       fence,
     );
+    await this.auditLogs?.record({
+      action: 'GAME_FINISHED',
+      targetType: 'game',
+      targetId: gameId,
+      after: { winnerIds: resolvedWinners },
+    });
+    return finalEvent;
   }
 
   private async assertLease(gameId: string, fence: GameFence): Promise<void> {

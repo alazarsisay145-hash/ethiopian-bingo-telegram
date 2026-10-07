@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { AppError, ErrorCode } from '@bingo/shared';
 import type { LedgerEntry } from '../../domain/entities.js';
@@ -20,7 +21,7 @@ const applySchema = z.object({
 });
 
 export class PrismaLedgerRepository implements LedgerRepository {
-  constructor(private readonly db: Db) {}
+  constructor(private readonly db: Db, private readonly transactional = false) {}
 
   /**
    * `SELECT ... FOR UPDATE` serialises every ledger write for one wallet, so the balance check,
@@ -30,7 +31,16 @@ export class PrismaLedgerRepository implements LedgerRepository {
   async apply(input: LedgerApplyInput): Promise<LedgerEntry> {
     const entry = applySchema.parse(input);
     try {
-      return await this.db.$transaction(async (tx) => {
+      const execute = (tx: Prisma.TransactionClient) => this.applyLocked(tx, entry);
+      return this.transactional ? await execute(this.db) : await this.db.$transaction(execute);
+    } catch (error) {
+      // Same key raced across different wallets (no shared lock): the loser is a conflict.
+      if (isUniqueViolation(error)) throw conflict('Idempotency key already used');
+      throw error;
+    }
+  }
+
+  private async applyLocked(tx: Prisma.TransactionClient, entry: z.infer<typeof applySchema>) {
         const wallets = await tx.$queryRaw<{ balance_minor: bigint }[]>`
           SELECT balance_minor FROM wallets WHERE user_id = ${entry.userId}::uuid FOR UPDATE`;
         const wallet = wallets[0];
@@ -63,12 +73,6 @@ export class PrismaLedgerRepository implements LedgerRepository {
           data: { balanceMinor: balanceAfter, version: { increment: 1 } },
         });
         return created;
-      });
-    } catch (error) {
-      // Same key raced across different wallets (no shared lock): the loser is a conflict.
-      if (isUniqueViolation(error)) throw conflict('Idempotency key already used');
-      throw error;
-    }
   }
 
   async getBalance(userId: string): Promise<bigint> {
@@ -76,6 +80,13 @@ export class PrismaLedgerRepository implements LedgerRepository {
     const wallet = await this.db.wallet.findUnique({ where: { userId } });
     if (!wallet) throw notFound('Wallet');
     return wallet.balanceMinor;
+  }
+
+  async getWallet(userId: string): Promise<{ balanceMinor: bigint; currency: string; version: number }> {
+    requireUuid(userId, 'userId');
+    const wallet = await this.db.wallet.findUnique({ where: { userId } });
+    if (!wallet) throw notFound('Wallet');
+    return { balanceMinor: wallet.balanceMinor, currency: wallet.currency, version: wallet.version };
   }
 
   async listByUser(

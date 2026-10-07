@@ -119,6 +119,7 @@ model Room {
   drawIntervalMs Int        @map("draw_interval_ms")
   activePatterns String[]   @map("active_patterns")
   cardPoolSize   Int        @map("card_pool_size")
+  startCountdownMs Int      @default(15000) @map("start_countdown_ms")
   cardPoolSeed   String     @map("card_pool_seed")
   status         RoomStatus @default(OPEN)
   createdById    String?    @map("created_by_id") @db.Uuid
@@ -139,6 +140,7 @@ model Game {
   seedEncrypted   String?    @map("seed_encrypted")
   seedRevealedAt  DateTime?  @map("seed_revealed_at") @db.Timestamptz(3)
   startedAt       DateTime?  @map("started_at") @db.Timestamptz(3)
+  startingAt      DateTime?  @map("starting_at") @db.Timestamptz(3)
   endedAt         DateTime?  @map("ended_at") @db.Timestamptz(3)
   ownerInstanceId String?    @map("owner_instance_id")
   fencingToken    BigInt     @default(0) @map("fencing_token")

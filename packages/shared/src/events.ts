@@ -17,6 +17,7 @@ export interface ClientToServerEvents {
 export interface ServerToClientEvents {
   'room:state': (payload: ServerPayloads['room:state']) => void;
   'game:started': (payload: ServerPayloads['game:started']) => void;
+  'game:starting': (payload: ServerPayloads['game:starting']) => void;
   'game:number': (payload: ServerPayloads['game:number']) => void;
   'game:claim_result': (payload: ServerPayloads['game:claim_result']) => void;
   'game:ended': (payload: ServerPayloads['game:ended']) => void;

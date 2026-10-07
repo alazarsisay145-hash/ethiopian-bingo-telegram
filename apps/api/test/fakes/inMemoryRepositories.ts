@@ -19,6 +19,7 @@ const roomFields = {
   minPlayers: z.number().int().positive(),
   maxPlayers: z.number().int().positive(),
   drawIntervalMs: z.number().int().positive(),
+  startCountdownMs: z.number().int().min(1000).max(60000).default(15000),
   activePatterns: z.array(patternIdSchema).min(1),
   cardPoolSize: z.number().int().positive(),
 };
@@ -62,6 +63,38 @@ export function createInMemoryRepositories(clock: Clock = { now: () => new Date(
     const error = failures.get(operation);
     if (error) { failures.delete(operation); throw error; }
   };
+  const maps = [
+    userRows, wallets, roomRows, poolSeeds, gameRows, commitments, playerRows,
+    eventRows, claimRows, ledgerRows, auditRows,
+  ] as const;
+  let transactionTail: Promise<void> = Promise.resolve();
+  const withTransaction = async <T>(operation: (repositories: {
+    users: UserRepository;
+    rooms: RoomRepository;
+    games: GameRepository;
+    gamePlayers: GamePlayerRepository;
+    gameEvents: GameEventRepository;
+    claims: ClaimRepository;
+    ledger: LedgerRepository;
+    auditLogs: AuditLogRepository;
+  }) => Promise<T>): Promise<T> => {
+    let release!: () => void;
+    const previous = transactionTail;
+    transactionTail = new Promise<void>((resolve) => { release = resolve; });
+    await previous;
+    const snapshots = maps.map((map) => [...map.entries()].map(([id, value]) => [id, clone(value)] as const));
+    try {
+      return await operation({ users, rooms, games, gamePlayers: players, gameEvents: events, claims, ledger, auditLogs });
+    } catch (error) {
+      maps.forEach((map, index) => {
+        map.clear();
+        for (const [id, value] of snapshots[index] ?? []) map.set(id, clone(value));
+      });
+      throw error;
+    } finally {
+      release();
+    }
+  };
   const append = (row: Game, type: string, payload: unknown): GameEvent => {
     const event: GameEvent = {
       gameId: row.id, seq: row.currentSeq + 1, type, payload: clone(payload), createdAt: clock.now(),
@@ -94,6 +127,8 @@ export function createInMemoryRepositories(clock: Clock = { now: () => new Date(
       return clone(row);
     },
     async findById(id) { return clone(userRows.get(id) ?? null); },
+    async findManyByIds(ids) { return clone([...userRows.values()].filter((row) => ids.includes(row.id))); },
+    async lockForUpdate(id) { return clone(userRows.get(id) ?? null); },
     async findByTelegramId(id) { return clone([...userRows.values()].find((row) => row.telegramId === id) ?? null); },
     async setRole(id, role) { const row = user(id); row.role = role; row.updatedAt = clock.now(); return clone(row); },
     async setStatus(id, status) { const row = user(id); row.status = status; row.updatedAt = clock.now(); return clone(row); },
@@ -140,14 +175,30 @@ export function createInMemoryRepositories(clock: Clock = { now: () => new Date(
     async findActiveByRoom(id) {
       return clone([...gameRows.values()].find((row) => row.roomId === id && !['ENDED', 'CANCELLED'].includes(row.status)) ?? null);
     },
+    async listByStatus(statuses) { return clone([...gameRows.values()].filter((row) => statuses.includes(row.status))); },
+    async lockForUpdate(id) { return clone(gameRows.get(id) ?? null); },
+    async adjustPotMinor(id, deltaMinor) {
+      const row = game(id);
+      if (!['LOBBY', 'STARTING', 'CANCELLED'].includes(row.status) || row.potMinor + deltaMinor < 0n) conflict('Game pot cannot be changed in its current state');
+      row.potMinor += deltaMinor;
+      return clone(row);
+    },
+    async setStartingAt(id, startingAt) {
+      const row = gameRows.get(id);
+      if (!row || (startingAt && (row.status !== 'LOBBY' || row.startingAt)) ||
+        (!startingAt && (row.status !== 'STARTING' || !row.startingAt))) return null;
+      row.startingAt = startingAt;
+      row.status = startingAt ? 'STARTING' : 'LOBBY';
+      return clone(row);
+    },
     async listRunnable() { return clone([...gameRows.values()].filter((row) => ['RUNNING', 'SETTLING'].includes(row.status))); },
     async updateStatus(id, status, fence) {
       const row = game(id); checkFence(row, fence);
       if (!GAME_STATUS_TRANSITIONS[row.status].includes(status)) conflict(`Cannot move game from ${row.status} to ${status}`);
       fail('games.updateStatus');
       row.status = status; row.updatedAt = clock.now();
-      if (status === 'RUNNING') row.startedAt = clock.now();
-      if (status === 'ENDED' || status === 'CANCELLED') row.endedAt = clock.now();
+      if (status === 'RUNNING') { row.startedAt = clock.now(); row.startingAt = null; }
+      if (status === 'ENDED' || status === 'CANCELLED') { row.endedAt = clock.now(); row.startingAt = null; }
       return clone(row);
     },
     async setSeedCommitment(id, input) {
@@ -203,6 +254,9 @@ export function createInMemoryRepositories(clock: Clock = { now: () => new Date(
       return { kind: 'reserved', player: clone(row) };
     },
     async listByGame(id) { return clone([...playerRows.values()].filter((row) => row.gameId === id).sort((a, b) => a.cardNumber - b.cardNumber)); },
+    async listByUser(id, statuses = ['LOBBY', 'STARTING', 'RUNNING', 'SETTLING']) {
+      return clone([...playerRows.values()].filter((row) => row.userId === id && statuses.includes(gameRows.get(row.gameId)?.status ?? 'CANCELLED')));
+    },
     async findByGameAndUser(id, userId) { return clone(playerRows.get(key(id, userId)) ?? null); },
     async remove(id, userId) {
       uuid.parse(id); uuid.parse(userId);
@@ -284,6 +338,11 @@ export function createInMemoryRepositories(clock: Clock = { now: () => new Date(
       return clone(entry);
     },
     async getBalance(id) { uuid.parse(id); return (wallets.get(id) ?? missing('Wallet not found')).balanceMinor; },
+    async getWallet(id) {
+      uuid.parse(id);
+      const wallet = wallets.get(id) ?? missing('Wallet not found');
+      return clone({ balanceMinor: wallet.balanceMinor, currency: wallet.currency, version: wallet.version });
+    },
     async listByUser(id, options = {}) {
       return clone([...ledgerRows.values()].filter((row) => row.userId === id && (!options.before || row.createdAt < options.before))
         .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime() || b.id.localeCompare(a.id))
@@ -318,6 +377,7 @@ export function createInMemoryRepositories(clock: Clock = { now: () => new Date(
   return {
     users, rooms, games, players, events, claims, ledger, auditLogs,
     gamePlayers: players, gameEvents: events,
+    unitOfWork: { withTransaction },
     failNext(operation: string, error = new Error(`Injected ${operation} failure`)) { failures.set(operation, error); },
     setPotMinor(id: string, potMinor: bigint) { z.bigint().nonnegative().max(MAX_INT64).parse(potMinor); game(id).potMinor = potMinor; },
     getWallet(id: string) { return clone(wallets.get(id) ?? null); },

@@ -8,6 +8,7 @@ import type {
   GamePlayerRepository,
   GameRepository,
   RoomRepository,
+  AuditLogRepository,
 } from '../../domain/repositories.js';
 import type { GameFence } from '../../domain/repositories.js';
 import type { GameLock, SeedVault } from '../../domain/ports.js';
@@ -23,9 +24,10 @@ export class ClaimService {
     private readonly lock: GameLock,
     private readonly vault: SeedVault,
     private readonly disqualifyOnFalseClaim = true,
+    private readonly auditLogs?: AuditLogRepository,
   ) {}
 
-  claim(input: { gameId: string; userId: string }, fence: GameFence): Promise<ClaimResult> {
+  claim(input: { gameId: string; userId: string; requestId?: string }, fence: GameFence): Promise<ClaimResult> {
     return this.lock.runExclusive(`game:${input.gameId}:state`, async () => {
       const game = await this.requireGame(input.gameId);
       if (game.status !== 'RUNNING') {
@@ -111,6 +113,15 @@ export class ClaimService {
         patterns,
         disqualifyOnFalseClaim: this.disqualifyOnFalseClaim,
       }, fence);
+      if (!accepted && this.disqualifyOnFalseClaim) {
+        await this.auditLogs?.record({
+          action: 'FALSE_CLAIM_DISQUALIFIED',
+          targetType: 'game',
+          targetId: input.gameId,
+          requestId: input.requestId,
+          after: { userId: input.userId, atSeq },
+        });
+      }
       return {
         gameId: input.gameId,
         userId: input.userId,

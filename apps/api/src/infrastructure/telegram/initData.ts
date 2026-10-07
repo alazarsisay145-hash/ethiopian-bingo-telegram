@@ -73,6 +73,9 @@ export class TelegramAuthentication implements AuthenticationPort {
         photoUrl: user.photo_url,
         languageCode: user.language_code,
       });
+      if (profile.status === 'BANNED') {
+        throw new AppError(ErrorCode.FORBIDDEN, 403, 'User is banned');
+      }
       return {
         id: profile.id,
         telegramId: user.id,

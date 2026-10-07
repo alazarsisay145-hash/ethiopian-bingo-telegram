@@ -11,6 +11,7 @@ import type {
 } from '../../domain/repositories.js';
 import { GameStateProjector } from './gameStateProjector.js';
 import { ClaimService } from './claimService.js';
+import type { GameRoomService } from '../rooms/gameRoomService.js';
 
 export interface GameMembership {
   isMember(gameId: string, userId: string): Promise<boolean>;
@@ -29,6 +30,7 @@ export function createGameEventHandlers(options: {
   membership: GameMembership;
   fences: GameFenceProvider;
   publisher: GameEventPublisher;
+  gameRooms: GameRoomService;
 }): ApplicationEventHandlers {
   const ensureMember = async (gameId: string, context: EventContext): Promise<void> => {
     if (!(await options.membership.isMember(gameId, context.user.id))) {
@@ -37,13 +39,43 @@ export function createGameEventHandlers(options: {
   };
 
   return {
-    'game:ready': async () => {
-      throw new AppError(ErrorCode.NOT_FOUND, 404, 'Room start service is not available');
+    'room:join': async ({ roomId }, context) => {
+      const game = await options.gameRooms.getOrCreateWaitingGame(roomId);
+      await context.joinRoom?.(`room:${roomId}`);
+      await context.joinRoom?.(`game:${game.id}`);
+      await options.gameRooms.publishRoomState(game.id);
+    },
+    'room:leave': async ({ roomId }, context) => {
+      await context.leaveRoom?.(`room:${roomId}`);
+    },
+    'card:select': async ({ roomId, cardNumber }, context) => {
+      const game = await options.gameRooms.getOrCreateWaitingGame(roomId);
+      await options.gameRooms.joinGame({ gameId: game.id, userId: context.user.id, cardNumber, requestId: context.requestId });
+      await context.joinRoom?.(`game:${game.id}`);
+    },
+    'card:release': async ({ roomId }, context) => {
+      const game = await options.games.findActiveByRoom(roomId);
+      if (!game) throw new AppError(ErrorCode.NOT_FOUND, 404, 'Waiting game not found');
+      await options.gameRooms.leaveGame(game.id, context.user.id, context.requestId);
+      await context.leaveRoom?.(`game:${game.id}`);
+    },
+    'game:ready': async ({ roomId }, context) => {
+      const game = await options.gameRooms.getOrCreateWaitingGame(roomId);
+      if (await options.membership.isMember(game.id, context.user.id)) {
+        if (game.startingAt) {
+          await options.publisher.publishUser(context.user.id, 'game:starting', {
+            gameId: game.id,
+            startsAt: game.startingAt.toISOString(),
+            seq: game.currentSeq,
+          });
+        }
+        await options.gameRooms.publishRoomState(game.id);
+      }
     },
     'game:claim': async ({ gameId }, context) => {
       await ensureMember(gameId, context);
       const result = await options.claims.claim(
-        { gameId, userId: context.user.id },
+        { gameId, userId: context.user.id, requestId: context.requestId },
         await options.fences.current(gameId),
       );
       const players = await options.players.listByGame(gameId);
@@ -54,6 +86,20 @@ export function createGameEventHandlers(options: {
       );
     },
     'state:resync': async ({ gameId, lastSeq }, context) => {
+      if (gameId) {
+        await resyncGame(gameId, lastSeq, context);
+        return;
+      }
+      const memberships = await options.players.listByUser(context.user.id);
+      const gameIds = [...new Set(memberships.map(({ gameId: id }) => id))];
+      await Promise.all(gameIds.map(async (id) => {
+        await context.joinRoom?.(`game:${id}`);
+        await resyncGame(id, lastSeq, context);
+      }));
+    },
+  };
+
+  async function resyncGame(gameId: string, lastSeq: number, context: EventContext): Promise<void> {
       await ensureMember(gameId, context);
       const game = await options.games.findById(gameId);
       if (!game) throw new AppError(ErrorCode.NOT_FOUND, 404, 'Game not found');
@@ -150,6 +196,5 @@ export function createGameEventHandlers(options: {
           await options.publisher.publishUser(context.user.id, 'game:claim_result', claimResult);
         }
       }
-    },
-  };
+  }
 }
