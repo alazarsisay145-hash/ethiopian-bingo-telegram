@@ -1,0 +1,31 @@
+{
+  "name": "ethiopian-bingo-telegram",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.34.5",
+  "engines": {
+    "node": ">=20 <21",
+    "pnpm": ">=10.34.5 <11"
+  },
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "test": "turbo run test",
+    "test:coverage": "turbo run test:coverage",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "typecheck": "turbo run typecheck",
+    "clean": "turbo run clean && rm -rf .turbo",
+    "docker:dev": "docker compose -f infra/docker/docker-compose.dev.yml up -d"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.39.1",
+    "@types/node": "20.19.24",
+    "eslint": "9.39.1",
+    "globals": "16.5.0",
+    "prettier": "3.6.2",
+    "turbo": "2.9.14",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.71.1"
+  }
+}
