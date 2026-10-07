@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { AppError } from '@bingo/shared';
 import { signedInitData, testBotToken } from '../../test-support.js';
+import type { UserRepository } from '../../domain/repositories.js';
 import { TelegramAuthentication, verifyTelegramInitData } from './initData.js';
 
 describe('Telegram initData verification', () => {
@@ -10,6 +11,18 @@ describe('Telegram initData verification', () => {
     expect(await new TelegramAuthentication(testBotToken).authenticate(data)).toEqual({
       id: 'telegram:12345', telegramId: 12345, firstName: 'Test', username: 'tester',
     });
+  });
+  it('maps authenticated Telegram identity to its persisted server-side user id', async () => {
+    let persistedTelegramId: bigint | undefined;
+    const users = {
+      upsertFromTelegram: async (input: { telegramId: bigint; firstName: string; username?: string }) => {
+        persistedTelegramId = input.telegramId;
+        return { id: 'user-database-id', firstName: input.firstName, username: input.username ?? null };
+      },
+    } as unknown as UserRepository;
+    const profile = await new TelegramAuthentication(testBotToken, {}, users).authenticate(signedInitData());
+    expect(persistedTelegramId).toBe(12345n);
+    expect(profile).toMatchObject({ id: 'user-database-id', telegramId: 12345 });
   });
   it('verifies decoded values, plus signs, Unicode, and arbitrary key ordering', () => {
     const data = signedInitData({ user: JSON.stringify({ id: 123, first_name: 'ሰላም + Test' }), query_id: 'a+b=c' });

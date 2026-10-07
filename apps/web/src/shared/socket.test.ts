@@ -83,7 +83,7 @@ describe('typed socket contracts', () => {
         gameId: 'game-1',
         roomId: 'room-1',
         seedHash: started.seedHash,
-        status: 'running',
+        status: 'active',
         calledNumbers: [4, 7, 8],
         seq: 4,
       },

@@ -6,8 +6,9 @@ represented by `0`; all other cells must be nonzero and within their column.
 Positive card numbers identify a room's deterministic card pool.
 
 The draw is a seeded Fisher–Yates permutation of integers 1–75 with no repeats.
-No random source or timer lives inside the engine. The orchestrator will decide
-draw intervals and supply a server-generated secret seed.
+The API generates a 32-byte seed through its secret-source port, publishes its
+SHA-256 commitment at game start, and stores the seed with AES-256-GCM encryption.
+Only the runner owns the clock; the deterministic engine has no timer.
 
 The available pattern catalogue has five rows, five columns, both diagonals,
 four corners, and full house. A pattern wins exactly when every indexed cell
@@ -15,12 +16,19 @@ is free or belongs to the server's called-number set. The engine returns **all**
 matching pattern IDs; room configuration selects which patterns are active.
 No default rooms or live games are created.
 
-Future orchestration, not the pure engine, must enforce membership, card
-ownership, game status, false-claim disqualification and same-draw claim
-settlement. The intended hall-style policy is false claim disqualification for
-that game and splitting prizes among eligible winners in the same draw tick.
-This policy is not implemented as pretend functionality in Phase 1.
+Persisted statuses map to product statuses as follows: `LOBBY=waiting`,
+`STARTING=starting`, `RUNNING=active`, `SETTLING=active`, `ENDED=finished`, and
+`CANCELLED=cancelled`. `SETTLING` is an internal sub-phase of the public `active`
+state. Legal persisted transitions are enforced by the repository transition table.
+
+Claims are checked against the player's persisted card, the event-derived called
+set, and the room's active patterns. By default, a false claim is recorded and
+disqualifies that player for the game. Valid claims at the same draw index remain
+eligible until the next draw tick; settlement treats them as simultaneous winners.
+The pot is divided in integer minor units, with any remainder assigned to the
+first accepted claimant. Stake collection is not implemented, so no pot is invented.
 
 Cosmetic marking or auto-highlighting has no bearing on a winning claim.
-Rewards and fees must be computed transactionally on the server; this phase
-does not move money or define payment-provider/legal policy.
+Rewards and fees must be computed transactionally on the server. The game engine
+can issue idempotent ledger prizes from a persisted non-zero pot, but stake
+collection, payment providers, and payment-provider/legal policy remain out of scope.

@@ -39,6 +39,9 @@ importers:
 
   apps/api:
     dependencies:
+      '@bingo/engine':
+        specifier: workspace:*
+        version: link:../../packages/engine
       '@bingo/shared':
         specifier: workspace:*
         version: link:../../packages/shared

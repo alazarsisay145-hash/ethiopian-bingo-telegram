@@ -35,4 +35,12 @@ describe('environment configuration', () => {
   it('treats blank optional URLs as not configured', () => {
     expect(parseEnv({ ...required, DATABASE_URL: '', REDIS_URL: '' }).DATABASE_URL).toBeUndefined();
   });
+  it('requires a 32-byte seed encryption key in production', () => {
+    expect(() => parseEnv({ ...required, NODE_ENV: 'production' })).toThrow();
+    expect(parseEnv({
+      ...required,
+      NODE_ENV: 'production',
+      SEED_ENCRYPTION_KEY: '12'.repeat(32),
+    }).SEED_ENCRYPTION_KEY).toBe('12'.repeat(32));
+  });
 });

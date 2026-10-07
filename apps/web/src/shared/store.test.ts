@@ -14,7 +14,7 @@ const snapshot = (seq: number, calledNumbers: number[] = []) => ({
     gameId,
     roomId: 'room-1',
     seedHash: started.seedHash,
-    status: 'running',
+    status: 'active',
     calledNumbers,
     seq,
   },

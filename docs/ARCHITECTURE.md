@@ -1,21 +1,23 @@
 # Architecture
 
-## Phase 1 boundary
+## Backend foundation and Phase 2 game services
 
-This is a production-shaped foundation, not a playable service. The engine and
-Telegram HMAC verifier are implemented. Persistence, sessions, rooms, game
-orchestration, ledger, admin, and deployment operations are extension points.
-No adapter claims to query a database merely because its URL exists.
+The pure engine, Telegram HMAC verifier, persistence, and Phase 2 game lifecycle,
+draw, claim, projection, settlement, and runner services are implemented behind
+ports. These services are dependency-injected and do not yet make the entire
+product production-ready: rooms/lobby, sessions, funded pots, admin, UI, and
+deployment operations remain extension points.
 
 ## Server authority and clean layers
 
 The web app renders facts and submits intents. It imports shared contracts, never
 the engine. The API composition root connects:
 
-1. **Domain**: authenticated identity and dependency/application ports.
-2. **Application**: readiness and authenticated intent processing contracts.
-3. **Infrastructure**: Telegram cryptographic verification and Pino logging;
-   later, Postgres/Redis repositories implement inward-facing ports.
+1. **Domain**: authenticated identity, persistence, lease and application ports.
+2. **Application**: game lifecycle, claims, draws, settlement, state projection,
+   and runner coordination.
+3. **Infrastructure**: Telegram verification, AES-GCM seed vault, Redis locks,
+   Postgres repositories and Pino logging.
 4. **Interfaces**: Fastify HTTP and Socket.IO, validation, error translation.
 
 Imports point inward; domain/application must not import infrastructure or
@@ -54,11 +56,15 @@ per-identity WS quotas and session revocation are later requirements.
 users, card ownership, game events and the ledger; constraints, not application checks, enforce
 uniqueness, append-only history and non-negative balances. See [Data model](DATA_MODEL.md).
 
-**Still future:** nothing consumes these repositories yet. Sessions, the rooms service, the game
-orchestrator (which acquires the lease, passes the fencing token to Postgres and appends events
-before publishing), a transaction/unit-of-work composition of ledger + card reservation,
-reconnection replay, admin, UI, and deployment are later phases. Redis also remains to be used
-for live snapshots, presence, pubsub and rate limits.
+**Phase 2 services:** lifecycle and claim/draw operations depend on repository
+and secret/lock ports; the runner acquires and heartbeats the fenced lease; the
+projector folds persisted events; socket handlers enforce membership and bounded
+resync. The room-level ready handler remains `NOT_FOUND` pending the room service.
+
+**Still future:** no stake collection/unit-of-work exists, so the pot is not
+automatically funded. Sessions, the rooms service, persistent profile management,
+admin, UI, payments, multi-region operations, and deployment are not implemented.
+These omissions prevent a production-ready release.
 
 Only one process advances a game. The Redis lease (heartbeat + fencing token) selects the owner;
 writes carrying a stale fencing token are rejected by Postgres. Persist each meaningful event

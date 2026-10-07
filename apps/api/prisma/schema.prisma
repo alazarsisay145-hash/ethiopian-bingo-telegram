@@ -197,6 +197,7 @@ model Claim {
   game Game @relation(fields: [gameId], references: [id], onDelete: Restrict)
   user User @relation(fields: [userId], references: [id], onDelete: Restrict)
 
+  @@unique([gameId, userId])
   @@index([gameId, createdAt])
   @@map("claims")
 }

@@ -93,15 +93,35 @@ export const calledNumbersSchema = z
   .array(numberSchema)
   .max(TOTAL_NUMBERS)
   .refine((values) => new Set(values).size === values.length, 'Numbers must be unique');
+export const productGameStatusSchema = z.enum([
+  'waiting',
+  'starting',
+  'active',
+  'finished',
+  'cancelled',
+]);
+export type ProductGameStatus = z.infer<typeof productGameStatusSchema>;
+
 export const gameStateSchema = z
   .object({
     gameId: identifierSchema,
     roomId: identifierSchema,
-    status: z.enum(['waiting', 'running', 'ended']),
+    status: productGameStatusSchema,
     seq: sequenceSchema,
     calledNumbers: calledNumbersSchema,
-    seedHash: seedHashSchema,
+    seedHash: seedHashSchema.optional(),
     yourCard: bingoCardSchema.optional(),
+    players: z
+      .array(
+        z
+          .object({
+            userId: identifierSchema,
+            status: z.enum(['active', 'disqualified', 'winner']),
+          })
+          .strict(),
+      )
+      .optional(),
+    winnerIds: z.array(identifierSchema).optional(),
   })
   .strict();
 export type GameState = z.infer<typeof gameStateSchema>;

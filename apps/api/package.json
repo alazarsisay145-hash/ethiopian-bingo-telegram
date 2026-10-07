@@ -29,6 +29,7 @@
     "node": ">=20 <21"
   },
   "dependencies": {
+    "@bingo/engine": "workspace:*",
     "@bingo/shared": "workspace:*",
     "@fastify/cors": "11.3.0",
     "@fastify/helmet": "13.1.1",

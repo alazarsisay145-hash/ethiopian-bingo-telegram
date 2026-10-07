@@ -2,12 +2,18 @@ import type { Logger } from 'pino';
 import type { Env } from '../config/env.js';
 import type { DependencyProbes } from '../domain/ports.js';
 import { createPrismaClient } from './db/prisma.js';
+import { createRepositories, type Repositories } from './db/index.js';
+import type { Db } from './db/prisma.js';
+import type { RedisClient } from './redis/client.js';
 import { PostgresProbe } from './db/probe.js';
 import { createRedisClient } from './redis/client.js';
 import { RedisProbe } from './redis/probe.js';
 
 export interface Infrastructure {
   probes: DependencyProbes;
+  repositories?: Repositories;
+  db?: Db;
+  redis?: RedisClient;
   close(): Promise<void>;
 }
 
@@ -22,20 +28,26 @@ export function createInfrastructure(
 ): Infrastructure {
   const probes: DependencyProbes = { ...injected };
   const closers: (() => Promise<unknown>)[] = [];
+  let db: Db | undefined;
+  let redis: RedisClient | undefined;
   if (env.DATABASE_URL && !probes.database) {
-    const db = createPrismaClient(env, logger);
-    probes.database = new PostgresProbe(db);
-    closers.push(() => db.$disconnect());
+    const databaseClient = createPrismaClient(env, logger);
+    db = databaseClient;
+    probes.database = new PostgresProbe(databaseClient);
+    closers.push(() => databaseClient.$disconnect());
   }
   if (env.REDIS_URL && !probes.redis) {
-    const redis = createRedisClient(env.REDIS_URL, logger);
-    probes.redis = new RedisProbe(redis);
+    const redisClient = createRedisClient(env.REDIS_URL, logger);
+    redis = redisClient;
+    probes.redis = new RedisProbe(redisClient);
     closers.push(async () => {
-      try { await redis.quit(); } catch { redis.disconnect(); }
+      try { await redisClient.quit(); } catch { redisClient.disconnect(); }
     });
   }
   return {
     probes,
+    ...(db ? { db, repositories: createRepositories(db) } : {}),
+    ...(redis ? { redis } : {}),
     close: async () => { await Promise.allSettled(closers.map((close) => close())); },
   };
 }
