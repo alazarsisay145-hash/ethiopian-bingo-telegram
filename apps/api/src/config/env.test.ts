@@ -14,6 +14,10 @@ describe('environment configuration', () => {
     expect(env.REDIS_URL).toBeUndefined();
     expect(env.CORS_ORIGINS).toEqual([]);
     expect(env.ADMIN_TELEGRAM_IDS).toEqual([]);
+    expect(env.TELEGRAM_BOT_TOKEN).toBe(required.BOT_TOKEN);
+    expect(env.TELEGRAM_INITDATA_MAX_AGE_SECONDS).toBe(3600);
+    expect(env.TELEGRAM_INITDATA_CLOCK_SKEW_SECONDS).toBe(30);
+    expect(env.TELEGRAM_INITDATA_MAX_BYTES).toBe(16384);
   });
   it('parses ports, exact origins, and safe admin IDs', () => {
     expect(parseEnv({
@@ -29,6 +33,12 @@ describe('environment configuration', () => {
     { ...required, LOG_LEVEL: 'invalid' }, { ...required, DATABASE_URL: 'invalid' },
     { ...required, CORS_ORIGINS: '*' }, { ...required, CORS_ORIGINS: 'https://example.com/path' },
     { ...required, ADMIN_TELEGRAM_IDS: '9007199254740992' }, { ...required, ADMIN_TELEGRAM_IDS: '1e3' },
+    { ...required, TELEGRAM_BOT_TOKEN: ' ' },
+    { ...required, TELEGRAM_INITDATA_MAX_AGE_SECONDS: '0' },
+    { ...required, TELEGRAM_INITDATA_MAX_AGE_SECONDS: '1.5' },
+    { ...required, TELEGRAM_INITDATA_CLOCK_SKEW_SECONDS: '-1' },
+    { ...required, TELEGRAM_INITDATA_MAX_BYTES: '0' },
+    { ...required, TELEGRAM_INITDATA_MAX_BYTES: '9007199254740992' },
   ])('rejects invalid configuration %#', (input) => {
     expect(() => parseEnv(input)).toThrow();
   });
@@ -40,7 +50,25 @@ describe('environment configuration', () => {
     expect(parseEnv({
       ...required,
       NODE_ENV: 'production',
+      TELEGRAM_BOT_TOKEN: required.BOT_TOKEN,
       SEED_ENCRYPTION_KEY: '12'.repeat(32),
     }).SEED_ENCRYPTION_KEY).toBe('12'.repeat(32));
+  });
+  it('requires the canonical Telegram token in production even with legacy BOT_TOKEN', () => {
+    expect(() => parseEnv({
+      ...required, NODE_ENV: 'production', SEED_ENCRYPTION_KEY: '12'.repeat(32),
+    })).toThrow();
+    expect(parseEnv({
+      JWT_SECRET: required.JWT_SECRET, TELEGRAM_BOT_TOKEN: 'canonical',
+    }).TELEGRAM_BOT_TOKEN).toBe('canonical');
+    expect(parseEnv({
+      ...required, TELEGRAM_BOT_TOKEN: 'canonical',
+      TELEGRAM_INITDATA_MAX_AGE_SECONDS: '120',
+      TELEGRAM_INITDATA_CLOCK_SKEW_SECONDS: '0',
+      TELEGRAM_INITDATA_MAX_BYTES: '4096',
+    })).toMatchObject({
+      TELEGRAM_BOT_TOKEN: 'canonical', TELEGRAM_INITDATA_MAX_AGE_SECONDS: 120,
+      TELEGRAM_INITDATA_CLOCK_SKEW_SECONDS: 0, TELEGRAM_INITDATA_MAX_BYTES: 4096,
+    });
   });
 });

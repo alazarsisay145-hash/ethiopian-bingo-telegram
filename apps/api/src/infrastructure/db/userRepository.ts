@@ -28,13 +28,16 @@ export class PrismaUserRepository implements UserRepository {
     return this.db.$transaction(async (tx) => {
       const role = this.adminTelegramIds.has(p.telegramId.toString()) ? 'ADMIN' : 'PLAYER';
       const rows = await tx.$queryRaw<{ id: string; inserted: boolean }[]>`
-        INSERT INTO users (id, telegram_id, username, first_name, last_name, photo_url, language_code, role, updated_at)
+        INSERT INTO users (id, telegram_id, username, first_name, last_name, photo_url, language_code, role, last_seen_at, updated_at)
         VALUES (${randomUUID()}::uuid, ${p.telegramId}, ${p.username ?? null}, ${p.firstName},
-                ${p.lastName ?? null}, ${p.photoUrl ?? null}, ${p.languageCode ?? null}, ${role}::user_role, now())
+                ${p.lastName ?? null}, ${p.photoUrl ?? null}, ${p.languageCode ?? null}, ${role}::user_role, now(), now())
         ON CONFLICT (telegram_id) DO UPDATE SET
-          username = EXCLUDED.username, first_name = EXCLUDED.first_name,
-          last_name = EXCLUDED.last_name, photo_url = EXCLUDED.photo_url,
-          language_code = EXCLUDED.language_code, updated_at = now()
+          username = CASE WHEN ${p.username !== undefined} THEN EXCLUDED.username ELSE users.username END,
+          first_name = EXCLUDED.first_name,
+          last_name = CASE WHEN ${p.lastName !== undefined} THEN EXCLUDED.last_name ELSE users.last_name END,
+          photo_url = CASE WHEN ${p.photoUrl !== undefined} THEN EXCLUDED.photo_url ELSE users.photo_url END,
+          language_code = CASE WHEN ${p.languageCode !== undefined} THEN EXCLUDED.language_code ELSE users.language_code END,
+          last_seen_at = now(), updated_at = now()
         RETURNING id::text AS id, (xmax = 0) AS inserted`;
       const id = rows[0]?.id;
       if (!id) throw notFound('User');

@@ -8,11 +8,13 @@ Monetary values are integer minor units of ETB, never floating-point amounts.
 
 ## HTTP
 
-- Player routes are under `/api/v1` and require `X-Telegram-Init-Data` containing
-  Telegram's raw signed init data. The server verifies it and resolves the
+- Player routes are under `/api/v1` and require `Authorization: tma <initData>`
+  containing Telegram's original URL-encoded signed init data. The legacy
+  `X-Telegram-Init-Data` header is also supported; conflicting credentials are
+  rejected. The server verifies it and resolves the
   persisted user, role, and status; client-supplied identities are never used.
   Missing/invalid data returns 401 `UNAUTHORIZED`; banned accounts return 403
-  `FORBIDDEN`. Admin routes additionally require a database `ADMIN` or
+  `FORBIDDEN` (also for suspended accounts). Admin routes additionally require a database `ADMIN` or
   `SUPER_ADMIN` role.
 - Player routes: `GET /rooms`, `GET /rooms/:roomId`,
   `GET /rooms/:roomId/cards/:cardNumber`, `POST /rooms/:roomId/games`,
@@ -28,6 +30,13 @@ Monetary values are integer minor units of ETB, never floating-point amounts.
 - HTTP rate limits are applied by authenticated user ID as well as the global
   IP fallback. WebSocket intents have per-user/event limits. Redis stores the
   shared production counters.
+- Do not send independent `userId`, `telegramId`, or `username` identity claims
+  in headers, query strings, bodies, or handshake auth. They never establish
+  identity, and mismatches with the authenticated identity are rejected.
+  Admin user-management path IDs are authorized target resources, not the
+  administrator's identity.
+- Room card-cell access is owner-only, not an unrestricted preview of other
+  players' cards. Game/card reads and resync return only the recipient's card.
 - `GET /healthz`: liveness.
 - `GET /readyz`: dependency statuses. Absent URLs report `not_configured`;
   configured URLs without operational adapters report `unavailable`, not `ok`.
@@ -40,12 +49,24 @@ Monetary values are integer minor units of ETB, never floating-point amounts.
 Connect with `auth: { initData }`, where `initData` is Telegram's original signed
 query string. HMAC, signed user schema and timestamp checks execute server-side.
 Missing, tampered or expired credentials reject connection with `UNAUTHORIZED`.
-Never send `initData` in URL query parameters or logs. Phase 1 does not issue JWTs.
+Never send `initData` in URL query parameters or logs. Phase 4 does not issue JWTs.
 Future session authentication implements the same inward-facing auth port.
 Telegram's signed launch data cannot be renewed by restoring SDK state. Once it
 expires, a reconnect requires reopening the Mini App to get a new launch, until
 the future JWT/session flow is implemented. A previously connected socket is
 not a durable or revocable session.
+
+The defaults are a 3,600-second maximum age, 30-second future clock skew, and a
+16,384-byte UTF-8 limit, configurable with `TELEGRAM_INITDATA_*` environment
+variables documented in [Authentication](AUTHENTICATION.md). The exact maximum
+age boundary is accepted; later reuse fails even if the original connection
+was successful. On reconnect, present the original launch data again; the server
+re-verifies it, reloads role/status, and rejoins active persisted room/game
+channels. Request `state:resync` after every successful reconnect. On 401 or
+`connect_error.data.code === "UNAUTHORIZED"` caused by expiry, reopen the Mini
+App to obtain fresh `initData`; do not change `auth_date` or endlessly retry the
+expired credential. `FORBIDDEN` requires account/permission resolution,
+and `RATE_LIMITED` requires backing off.
 
 ## Client → server intents
 

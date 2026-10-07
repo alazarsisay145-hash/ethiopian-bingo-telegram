@@ -17,6 +17,7 @@ enum UserRole {
 
 enum UserStatus {
   ACTIVE
+  SUSPENDED
   BANNED
 
   @@map("user_status")

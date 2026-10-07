@@ -26,6 +26,11 @@ Migration `20261007140000_lobby_countdown` adds a default 15-second room
 countdown and the game's durable `starting_at` timestamp. Countdown work is
 recovered by the lobby scheduler and protected by the game ownership lease.
 
+Phase 4 migration `20261007165000_suspended_user_status` adds `SUSPENDED` to
+`user_status`. Both `SUSPENDED` and `BANNED` deny authentication and socket
+intents. Telegram profile upserts preserve role/status/internal ID and wallet
+balance, update only present safe fields, and refresh `last_seen_at` atomically.
+
 ## Which constraint enforces which server-authority rule
 
 | Rule                                   | Enforcement                                                                                         |

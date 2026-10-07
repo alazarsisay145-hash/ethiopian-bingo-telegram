@@ -3,7 +3,8 @@
 Server-authoritative 5×5 Bingo backend. It includes deterministic game rules,
 Telegram handshake verification, persisted users, authenticated room/game APIs,
 transactional stakes and card reservations, lobby countdown, admin authorization,
-rate limits, and the Phase 2 draw/claim/settlement services. JWT sessions,
+rate limits, Phase 4 server-side Telegram authentication and authorization,
+and the Phase 2 draw/claim/settlement services. JWT sessions,
 payments, visual UI, admin UI, and deployment hardening are not implemented;
 this project is **not yet production-ready**.
 
@@ -17,7 +18,7 @@ this project is **not yet production-ready**.
 corepack enable
 pnpm install --frozen-lockfile
 cp .env.example .env
-# Fill BOT_TOKEN, JWT_SECRET, DATABASE_URL, REDIS_URL, and (for production
+# Fill TELEGRAM_BOT_TOKEN, JWT_SECRET, DATABASE_URL, REDIS_URL, and (for production
 # games) a 32-byte hex SEED_ENCRYPTION_KEY. JWT sessions are not issued yet.
 # For docker:dev, also set a local POSTGRES_PASSWORD.
 pnpm dev
@@ -29,6 +30,14 @@ Outside Telegram, the web app displays **Open this app inside Telegram**.
 The browser gate is UX, not authentication: only server HMAC verification establishes identity.
 Register your HTTPS web URL with BotFather, configure `CORS_ORIGINS` to its exact
 origin, and expose the API over HTTPS/WSS in production.
+
+Forward Telegram's original `initData` as `Authorization: tma <initData>` for
+HTTP and `auth: { initData }` on every Socket.IO connection. Never forward
+`initDataUnsafe` as proof of identity. The server verifies the signature and
+freshness, atomically resolves the database user, and authorizes private access.
+The default launch lifetime is one hour; reopen the Mini App when it expires.
+See [Authentication](docs/AUTHENTICATION.md) for configuration, errors,
+reconnection, the threat model, and the Phase 4 security review.
 
 ```sh
 pnpm docker:dev        # Postgres 16 + Redis 7 (needs POSTGRES_PASSWORD in .env)
@@ -120,7 +129,10 @@ also be reevaluated before production deployment.
 | 2     | Postgres repositories, Redis fencing, game orchestration services             |
 | 2.1   | Lifecycle, claim, concurrency, runner failover and real-service test hardening |
 | 3     | Player APIs, room/game lifecycle, transactional stakes, admin RBAC, rate limits |
-| 4     | Telegram auth sessions, JWT refresh/revocation, richer profile/history         |
+| 4     | Server-side Telegram Mini App authentication, identity mapping, authorization |
 | 5     | Mini App lobby/game/result/profile UI                                          |
 | 6     | Payment providers and operational wallet funding                               |
 | 7     | Deployment, monitoring, multi-region hardening and runbooks                     |
+
+JWT issuance, refresh, and revocation remain future session work, not part of
+Phase 4. No visual UI or payment provider integration is added in this phase.

@@ -30,7 +30,7 @@ describe.skipIf(!enabled)('Postgres repositories', () => {
       expect(second.id).toBe(first.id);
       expect(second.firstName).toBe('Abebe B');
       expect(second.lastName).toBe('K');
-      expect(second.username).toBeNull();
+      expect(second.username).toBe('abe');
       expect(second.role).toBe('ADMIN');
       expect(second.createdAt).toEqual(first.createdAt);
       expect(await db.wallet.count({ where: { userId: first.id } })).toBe(1);

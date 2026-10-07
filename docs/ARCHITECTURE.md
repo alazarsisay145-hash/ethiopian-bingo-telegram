@@ -1,6 +1,6 @@
 # Architecture
 
-## Phase 3 multiplayer backend
+## Phase 4 authentication on the multiplayer backend
 
 The pure engine, Telegram HMAC verifier, persistence, game lifecycle, rooms,
 authenticated player/admin HTTP routes, WebSocket intents, funded stakes,
@@ -46,6 +46,22 @@ user and obtains role/status from the database. `ADMIN_TELEGRAM_IDS` can bootstr
 an initial ADMIN role on first upsert and records an audit entry. CORS is not an
 identity check. Redis-backed HTTP and per-event WebSocket rate limits are enabled.
 JWT session issuance, refresh, and revocation are deferred.
+
+Phase 4 hardens the existing auth port rather than introducing a parallel
+identity system. The infrastructure adapter validates bounded URL-encoded
+launch data, Telegram HMAC and freshness before the transactional user upsert.
+It returns a typed domain `AuthContext`: database user ID, verified Telegram ID,
+database role/status, signed `authDate` (Unix seconds), and `verifiedAt` (Unix
+milliseconds). Fastify stores this as `request.auth`; Socket.IO stores it as
+`socket.data.auth`. Credentials and bot tokens are never stored in that context.
+
+HTTP authentication runs before private-route body validation. Reusable active,
+role, and persisted-membership guards compose with authentication; admin routes
+inherit role protection at plugin scope. Socket handshakes reauthenticate every
+connection and restore room/game channels from active persisted membership.
+Socket intents recheck account status against the database. Card projections
+and claims use only the resolved internal ID; clients cannot nominate an owner.
+See [Authentication](AUTHENTICATION.md) for the threat model and security review.
 
 ## Persistence and single-owner orchestration
 
