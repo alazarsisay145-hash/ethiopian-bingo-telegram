@@ -227,13 +227,26 @@ describe('player HTTP API', () => {
         payload: { cardNumber: 1 },
       });
       expect(join.statusCode).toBe(201);
-      expect((await app.inject({
-        url: `/api/v1/rooms/${room.id}/cards/1`, headers: headers(),
-      })).statusCode).toBe(200);
-      for (const [index, cardNumber] of [[0, 2], [1, 1]]) {
-        expect((await app.inject({
-          url: `/api/v1/rooms/${room.id}/cards/${cardNumber}`, headers: headers(index),
-        })).statusCode).toBe(403);
+      expect(
+        (
+          await app.inject({
+            url: `/api/v1/rooms/${room.id}/cards/1`,
+            headers: headers(),
+          })
+        ).statusCode,
+      ).toBe(200);
+      for (const [index, cardNumber] of [
+        [0, 2],
+        [1, 1],
+      ]) {
+        expect(
+          (
+            await app.inject({
+              url: `/api/v1/rooms/${room.id}/cards/${cardNumber}`,
+              headers: headers(index),
+            })
+          ).statusCode,
+        ).toBe(403);
       }
       const memberCard = await app.inject({
         url: `/api/v1/games/${gameId}/card`,
