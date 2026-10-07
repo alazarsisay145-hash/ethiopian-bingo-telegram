@@ -1,10 +1,11 @@
 # Ethiopian Bingo — Telegram Mini App
 
-Server-authoritative 5×5 Bingo backend foundation. It includes deterministic game
-rules, Telegram handshake verification, persistence, and dependency-injected Phase 2
-game lifecycle/draw/claim/runner services. Room/lobby management, funded stakes,
-sessions, and a playable client are not implemented; this project is **not yet
-production-ready**.
+Server-authoritative 5×5 Bingo backend. It includes deterministic game rules,
+Telegram handshake verification, persisted users, authenticated room/game APIs,
+transactional stakes and card reservations, lobby countdown, admin authorization,
+rate limits, and the Phase 2 draw/claim/settlement services. JWT sessions,
+payments, visual UI, admin UI, and deployment hardening are not implemented;
+this project is **not yet production-ready**.
 
 ## Prerequisites and setup
 
@@ -16,8 +17,8 @@ production-ready**.
 corepack enable
 pnpm install --frozen-lockfile
 cp .env.example .env
-# Fill BOT_TOKEN, a randomly generated JWT_SECRET, and (for production games) a
-# 32-byte hex SEED_ENCRYPTION_KEY.
+# Fill BOT_TOKEN, JWT_SECRET, DATABASE_URL, REDIS_URL, and (for production
+# games) a 32-byte hex SEED_ENCRYPTION_KEY. JWT sessions are not issued yet.
 # For docker:dev, also set a local POSTGRES_PASSWORD.
 pnpm dev
 ```
@@ -33,6 +34,7 @@ origin, and expose the API over HTTPS/WSS in production.
 pnpm docker:dev        # Postgres 16 + Redis 7 (needs POSTGRES_PASSWORD in .env)
 # Set DATABASE_URL and REDIS_URL in .env (see .env.example), then:
 pnpm db:migrate        # prisma migrate deploy: applies committed migrations
+pnpm db:seed           # development rooms only; never run for production
 pnpm dev
 curl http://127.0.0.1:3001/healthz
 curl -i http://127.0.0.1:3001/readyz
@@ -60,6 +62,7 @@ URL: `available`, `unavailable`, or `not_configured`. Schema changes during deve
 | `pnpm db:migrate:dev`| Create/apply a development migration                 |
 | `pnpm db:generate`   | Generate the Prisma client                           |
 | `pnpm db:studio`     | Prisma Studio                                        |
+| `pnpm db:seed`       | Seed two development rooms (refuses `NODE_ENV=production`) |
 | `pnpm test:integration` | Postgres/Redis Testcontainers suites (needs Docker) |
 
 Tests use synthetic Telegram signatures, Fastify inject, and actual loopback
@@ -114,14 +117,10 @@ also be reevaluated before production deployment.
 | Phase | Scope                                                                        |
 | ----- | ---------------------------------------------------------------------------- |
 | 1     | Foundation (this project): engine, shared contracts, API/web shells, tooling |
-| 2     | Postgres repositories, Redis fencing, game orchestration services (implemented behind ports) |
-| 3     | Telegram auth sessions, JWTs, persistent profiles                            |
-| 4     | Rooms, membership, atomic card reservations                                  |
-| 5     | Single-owner game loop, claims, authoritative settlement                     |
-| 6     | Wallet, idempotent ledger, payment integration                               |
-| 7     | Lobby, card selection and game screens                                       |
-| 8     | Persisted reconnection replay, distributed ownership/failover                |
-| 9     | History and fairness verification                                            |
-| 10    | Admin authorization, audit and operations                                    |
-| 11    | Distributed rate limiting and anti-abuse hardening                           |
-| 12    | Production deployment, monitoring and runbooks                               |
+| 2     | Postgres repositories, Redis fencing, game orchestration services             |
+| 2.1   | Lifecycle, claim, concurrency, runner failover and real-service test hardening |
+| 3     | Player APIs, room/game lifecycle, transactional stakes, admin RBAC, rate limits |
+| 4     | Telegram auth sessions, JWT refresh/revocation, richer profile/history         |
+| 5     | Mini App lobby/game/result/profile UI                                          |
+| 6     | Payment providers and operational wallet funding                               |
+| 7     | Deployment, monitoring, multi-region hardening and runbooks                     |

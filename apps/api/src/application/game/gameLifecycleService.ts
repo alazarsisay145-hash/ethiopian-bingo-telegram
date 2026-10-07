@@ -96,7 +96,7 @@ export class GameLifecycleService {
   ): Promise<{ game: Game; players: GamePlayer[] }> {
     return this.lock.runExclusive(`game:${gameId}:state`, async () => {
       const game = await this.requireGame(gameId);
-      if (game.status !== 'LOBBY')
+      if (game.status !== 'LOBBY' && game.status !== 'STARTING')
         throw new AppError(ErrorCode.CONFLICT, 409, 'Game has already started');
       const room = await this.rooms.findById(game.roomId);
       if (!room) throw new AppError(ErrorCode.NOT_FOUND, 404, 'Room not found');
@@ -105,7 +105,7 @@ export class GameLifecycleService {
         throw new AppError(ErrorCode.INVALID_STATE, 409, 'Not enough players to start');
       }
 
-      await this.games.updateStatus(gameId, 'STARTING', fence);
+      if (game.status === 'LOBBY') await this.games.updateStatus(gameId, 'STARTING', fence);
       const secretBytes = this.secrets.bytes(32);
       if (secretBytes.length !== 32) {
         throw new AppError(

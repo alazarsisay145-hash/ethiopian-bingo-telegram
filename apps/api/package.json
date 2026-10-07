@@ -12,6 +12,7 @@
     "db:migrate:dev": "prisma migrate dev",
     "db:studio": "prisma studio",
     "db:validate": "prisma validate",
+    "db:seed": "tsx --env-file=../../.env prisma/seed.ts",
     "lint": "eslint src",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

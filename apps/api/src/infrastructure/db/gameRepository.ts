@@ -63,7 +63,7 @@ export class PrismaGameRepository implements GameRepository {
     requireUuid(gameId, 'gameId');
     const rows = await this.db.$queryRaw<{ id: string }[]>`
       UPDATE games SET pot_minor = pot_minor + ${deltaMinor}, updated_at = now()
-      WHERE id = ${gameId}::uuid AND status IN ('LOBBY', 'CANCELLED')
+      WHERE id = ${gameId}::uuid AND status IN ('LOBBY', 'STARTING', 'CANCELLED')
         AND pot_minor + ${deltaMinor} >= 0
       RETURNING id::text AS id`;
     if (!rows.length) {
@@ -78,10 +78,12 @@ export class PrismaGameRepository implements GameRepository {
     const result = await this.db.game.updateMany({
       where: {
         id: gameId,
-        status: 'LOBBY',
+        status: startingAt ? 'LOBBY' : 'STARTING',
         startingAt: startingAt ? null : { not: null },
       },
-      data: { startingAt },
+      data: startingAt
+        ? { status: 'STARTING', startingAt }
+        : { status: 'LOBBY', startingAt: null },
     });
     if (!result.count) return null;
     return this.db.game.findUnique({ where: { id: gameId }, omit: omitSecret });
@@ -106,7 +108,6 @@ export class PrismaGameRepository implements GameRepository {
       },
       data: {
         status,
-        ...(status === 'STARTING' ? { startingAt: now } : {}),
         ...(status === 'RUNNING' ? { startedAt: now, startingAt: null } : {}),
         ...(status === 'ENDED' || status === 'CANCELLED' ? { endedAt: now, startingAt: null } : {}),
       },

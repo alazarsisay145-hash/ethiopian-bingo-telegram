@@ -1,12 +1,13 @@
 import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
-import { generateCard, verifySeed } from '@bingo/engine';
+import { generateCard, generateDrawSequence, verifySeed } from '@bingo/engine';
 import {
   AppError,
   ErrorCode,
   cancelGameBodySchema,
   cardParamsSchema,
   createRoomBodySchema,
+  emptyBodySchema,
   gameListQuerySchema,
   gameParamsSchema,
   historyQuerySchema,
@@ -93,15 +94,20 @@ export function registerHttpRoutes(app: FastifyInstance, deps: HttpApiDependenci
   });
 
   app.post('/api/v1/rooms/:roomId/games', { preHandler: auth }, async (request, reply) => {
+    validateEmptyBody(request.body);
     const { roomId } = validate(roomParamsSchema, request.params);
     const game = await deps.gameRooms.getOrCreateWaitingGame(roomId);
-    return reply.code(200).send({ gameId: game.id, roomId: game.roomId, status: 'waiting' });
+    return reply.code(200).send({
+      gameId: game.id,
+      roomId: game.roomId,
+      status: game.status === 'STARTING' ? 'starting' : 'waiting',
+    });
   });
 
   app.get('/api/v1/games', { preHandler: auth }, async (request) => {
     const { status } = validate(gameListQuerySchema, request.query);
     const statuses = status === 'waiting'
-      ? ['LOBBY'] as const
+      ? ['LOBBY', 'STARTING'] as const
       : status === 'active'
         ? ['STARTING', 'RUNNING', 'SETTLING'] as const
         : ['LOBBY', 'STARTING', 'RUNNING', 'SETTLING'] as const;
@@ -136,14 +142,13 @@ export function registerHttpRoutes(app: FastifyInstance, deps: HttpApiDependenci
       cardNumber,
       requestId: request.id,
     });
-    await publishWallet(deps, request.user!.id);
     return reply.code(201).send({ gameId, cardNumber: player.cardNumber });
   });
 
   app.post('/api/v1/games/:gameId/leave', { preHandler: auth }, async (request, reply) => {
+    validateEmptyBody(request.body);
     const { gameId } = validate(gameParamsSchema, request.params);
     await deps.gameRooms.leaveGame(gameId, request.user!.id, request.id);
-    await publishWallet(deps, request.user!.id);
     return reply.code(204).send();
   });
 
@@ -158,12 +163,13 @@ export function registerHttpRoutes(app: FastifyInstance, deps: HttpApiDependenci
   });
 
   app.post('/api/v1/games/:gameId/claim', { preHandler: auth }, async (request) => {
+    validateEmptyBody(request.body);
     const { gameId } = validate(gameParamsSchema, request.params);
     await deps.gameRooms.getMyCard(gameId, request.user!.id);
     const game = await deps.repositories.games.findById(gameId);
     if (!game || !game.ownerInstanceId) throw new AppError(ErrorCode.CONFLICT, 409, 'Game has no active owner');
     const result = await deps.claims.claim(
-      { gameId, userId: request.user!.id },
+      { gameId, userId: request.user!.id, requestId: request.id },
       { instanceId: game.ownerInstanceId, fencingToken: game.fencingToken },
     );
     return result;
@@ -185,11 +191,22 @@ export function registerHttpRoutes(app: FastifyInstance, deps: HttpApiDependenci
     const endPayload = (end?.payload ?? {}) as { winnerIds?: string[]; drawSequence?: number[]; seedRevealed?: string };
     let seedRevealed = endPayload.seedRevealed;
     let fairnessVerified = false;
+    const drawnNumbers = events
+      .filter(({ type }) => type === 'NUMBER_CALLED')
+      .map(({ payload }) => (payload as { number: number }).number);
     if (game.seedHash && !seedRevealed) {
       const revealed = await deps.repositories.games.revealSeed(gameId);
       seedRevealed = await deps.vault.open(revealed.seedEncrypted);
     }
-    if (game.seedHash && seedRevealed) fairnessVerified = verifySeed(seedRevealed, game.seedHash);
+    if (game.seedHash && seedRevealed && verifySeed(seedRevealed, game.seedHash)) {
+      const expected = generateDrawSequence(seedRevealed);
+      fairnessVerified = expected.slice(0, drawnNumbers.length).every(
+        (number, index) => number === drawnNumbers[index],
+      ) && (
+        !endPayload.drawSequence ||
+        JSON.stringify(endPayload.drawSequence) === JSON.stringify(expected)
+      );
+    }
     return {
       gameId,
       status: game.status === 'ENDED' ? 'finished' : 'cancelled',
@@ -198,9 +215,7 @@ export function registerHttpRoutes(app: FastifyInstance, deps: HttpApiDependenci
       payouts: await getPayouts(deps, gameId),
       seedHash: game.seedHash,
       ...(seedRevealed ? { seedRevealed } : {}),
-      drawSequence: endPayload.drawSequence ?? events
-        .filter(({ type }) => type === 'NUMBER_CALLED')
-        .map(({ payload }) => (payload as { number: number }).number),
+      drawSequence: endPayload.drawSequence ?? drawnNumbers,
       fairnessVerified,
     };
   });
@@ -260,6 +275,12 @@ export function registerHttpRoutes(app: FastifyInstance, deps: HttpApiDependenci
     const input = validate(updateRoomBodySchema, request.body);
     const before = await deps.repositories.rooms.findById(roomId);
     if (!before) throw new AppError(ErrorCode.NOT_FOUND, 404, 'Room not found');
+    const minPlayers = input.minPlayers ?? before.minPlayers;
+    const maxPlayers = input.maxPlayers ?? before.maxPlayers;
+    const cardPoolSize = input.cardPoolSize ?? before.cardPoolSize;
+    if (minPlayers < 2 || maxPlayers < minPlayers || maxPlayers > cardPoolSize) {
+      throw new AppError(ErrorCode.VALIDATION_ERROR, 400, 'Require 2 <= minPlayers <= maxPlayers <= cardPoolSize');
+    }
     const { stakeMinor, ...patch } = input;
     const room = await deps.repositories.rooms.update(roomId, {
       ...patch,
@@ -278,6 +299,7 @@ export function registerHttpRoutes(app: FastifyInstance, deps: HttpApiDependenci
   });
 
   app.post('/api/v1/admin/rooms/:roomId/close', { preHandler: admin }, async (request) => {
+    validateEmptyBody(request.body);
     const { roomId } = validate(roomParamsSchema, request.params);
     const room = await deps.repositories.rooms.update(roomId, { status: 'CLOSED' });
     await deps.repositories.auditLogs.record({
@@ -291,6 +313,7 @@ export function registerHttpRoutes(app: FastifyInstance, deps: HttpApiDependenci
   });
 
   app.post('/api/v1/admin/games/:gameId/start', { preHandler: admin }, async (request) => {
+    validateEmptyBody(request.body);
     const { gameId } = validate(gameParamsSchema, request.params);
     const lease = await deps.ownership.acquire(gameId, deps.instanceId, 10_000);
     if (!lease) throw new AppError(ErrorCode.CONFLICT, 409, 'Game is already being started');
@@ -320,7 +343,20 @@ export function registerHttpRoutes(app: FastifyInstance, deps: HttpApiDependenci
   app.post('/api/v1/admin/games/:gameId/cancel', { preHandler: admin }, async (request) => {
     const { gameId } = validate(gameParamsSchema, request.params);
     const { reason } = validate(cancelGameBodySchema, request.body);
+    const players = await deps.repositories.gamePlayers.listByGame(gameId);
     await deps.gameRooms.cancelGame(gameId, reason, request.id);
+    if (deps.publisher) {
+      await Promise.all(players.map(async ({ userId }) => {
+        const wallet = await deps.repositories.ledger.getWallet(userId);
+        if (wallet.balanceMinor <= BigInt(Number.MAX_SAFE_INTEGER)) {
+          await deps.publisher!.publishUser(userId, 'wallet:update', {
+            balanceMinor: Number(wallet.balanceMinor),
+            currency: 'ETB',
+            seq: wallet.version,
+          });
+        }
+      }));
+    }
     await deps.repositories.auditLogs.record({
       actorUserId: request.user!.id,
       action: 'GAME_CANCELLED_BY_ADMIN',
@@ -348,6 +384,7 @@ async function updateUserStatus(
   deps: HttpApiDependencies,
   status: 'ACTIVE' | 'BANNED',
 ) {
+  validateEmptyBody(request.body);
   const { userId } = validate(zUserParams, request.params);
   const user = await deps.repositories.users.setStatus(userId, status);
   await deps.repositories.auditLogs.record({
@@ -362,16 +399,8 @@ async function updateUserStatus(
 
 const zUserParams = z.object({ userId: uuidSchema }).strict();
 
-async function publishWallet(deps: HttpApiDependencies, userId: string): Promise<void> {
-  if (!deps.publisher) return;
-  const balance = await deps.repositories.ledger.getBalance(userId);
-  if (balance <= BigInt(Number.MAX_SAFE_INTEGER)) {
-    await deps.publisher.publishUser(userId, 'wallet:update', {
-      balanceMinor: Number(balance),
-      currency: 'ETB',
-      seq: 0,
-    });
-  }
+function validateEmptyBody(value: unknown): void {
+  if (value !== undefined) validate(emptyBodySchema, value);
 }
 
 async function getPayouts(deps: HttpApiDependencies, gameId: string) {

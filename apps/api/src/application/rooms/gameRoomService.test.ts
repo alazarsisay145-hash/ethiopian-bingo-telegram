@@ -41,6 +41,7 @@ async function createHarness(options: { stakeMinor?: bigint; balanceMinor?: bigi
     repositories.players,
     repositories.users,
     repositories.events,
+    repositories.ledger,
     repositories.auditLogs,
     repositories.unitOfWork,
     lifecycle as never,
@@ -79,6 +80,40 @@ describe('GameRoomService stake and membership transactions', () => {
       .rejects.toMatchObject({ code: ErrorCode.INSUFFICIENT_FUNDS });
     expect(await repositories.players.findByGameAndUser(game.id, user.id)).toBeNull();
     expect((await repositories.games.findById(game.id))?.potMinor).toBe(0n);
+  });
+
+  it('enforces the configured active-game cap before reserving or debiting', async () => {
+    const { repositories, service, user, game } = await createHarness();
+    await service.joinGame({ gameId: game.id, userId: user.id, cardNumber: 1 });
+    const secondRoom = await repositories.rooms.create({
+      name: 'Another room',
+      stakeMinor: 10n,
+      minPlayers: 2,
+      maxPlayers: 5,
+      drawIntervalMs: 5000,
+      activePatterns: ['row-1'],
+      cardPoolSize: 10,
+      cardPoolSeed: 'another-test-card-pool-seed',
+    });
+    const secondGame = await repositories.games.create({ roomId: secondRoom.id });
+    const limited = new GameRoomService(
+      repositories.rooms,
+      repositories.games,
+      repositories.players,
+      repositories.users,
+      repositories.events,
+      repositories.ledger,
+      repositories.auditLogs,
+      repositories.unitOfWork,
+      { createGame: (roomId: string) => repositories.games.create({ roomId }) } as never,
+      undefined,
+      1,
+    );
+    await expect(limited.joinGame({ gameId: secondGame.id, userId: user.id, cardNumber: 1 }))
+      .rejects.toMatchObject({ code: ErrorCode.CONFLICT });
+    expect((await repositories.games.findById(secondGame.id))?.potMinor).toBe(0n);
+    expect(await repositories.players.findByGameAndUser(secondGame.id, user.id)).toBeNull();
+    expect(await repositories.ledger.getBalance(user.id)).toBe(90n);
   });
 
   it('refunds leave and cancellation exactly once and clears the pot', async () => {

@@ -12,6 +12,7 @@ import type {
   AuthenticationPort,
   DependencyProbes,
   GameEventPublisher,
+  RateLimiter,
 } from './domain/ports.js';
 import { ClaimService } from './application/game/claimService.js';
 import { DrawService } from './application/game/drawService.js';
@@ -45,6 +46,8 @@ export interface BuildAppOptions {
   logger?: Logger;
   probes?: DependencyProbes;
   authentication?: AuthenticationPort;
+  authorizeUser?: (userId: string) => Promise<void>;
+  rateLimiter?: RateLimiter;
   eventHandlers?: ApplicationEventHandlers | ((io: BingoSocketServer) => ApplicationEventHandlers);
 }
 
@@ -62,7 +65,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
           const clock = new SystemClock();
           const scheduler = new SystemScheduler();
           const ownership = new RedisGameOwnershipLease(redis);
-          const rateLimiter = new RedisRateLimiter(redis);
+          const rateLimiter = options.rateLimiter ?? new RedisRateLimiter(redis);
           const lock = new RedisGameLock(redis, clock, scheduler);
           const vault = new AesGcmSeedVault(env.SEED_ENCRYPTION_KEY);
           const instanceId = randomUUID();
@@ -87,6 +90,10 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
             repositories.ledger,
             ownership,
             vault,
+            undefined,
+            undefined,
+            repositories.auditLogs,
+            eventPublisher,
           );
           const draws = new DrawService(
             repositories.games,
@@ -106,6 +113,8 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
             ownership,
             lock,
             vault,
+            true,
+            repositories.auditLogs,
           );
           const projector = new GameStateProjector(
             repositories.gameEvents,
@@ -122,6 +131,8 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
             eventPublisher,
             clock,
             scheduler,
+            undefined,
+            repositories.auditLogs,
           );
           const lifecycle = new GameLifecycleService(
             repositories.rooms,
@@ -140,6 +151,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
             repositories.gamePlayers,
             repositories.users,
             repositories.gameEvents,
+            repositories.ledger,
             repositories.auditLogs,
             infrastructure.unitOfWork,
             lifecycle,
@@ -225,6 +237,16 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   });
   app.addHook('onRequest', async (request, reply) => {
     reply.header('x-request-id', request.id);
+    if (
+      gameRuntime?.rateLimiter &&
+      !(await gameRuntime.rateLimiter.consume(
+        `http:ip:${request.ip}`,
+        env.HTTP_RATE_LIMIT_MAX,
+        env.HTTP_RATE_LIMIT_WINDOW_MS,
+      ))
+    ) {
+      throw new AppError(ErrorCode.RATE_LIMITED, 429, 'Too many requests');
+    }
   });
   app.setErrorHandler((error, request, reply) => {
     const mapped = mapError(error, request.id);
@@ -257,13 +279,24 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     origins: env.CORS_ORIGINS,
     logger: app.log,
     ...(gameRuntime ? {
-      rateLimiter: gameRuntime.rateLimiter,
+      rateLimiter: options.rateLimiter ?? gameRuntime.rateLimiter,
       rateLimitWindowMs: env.WS_RATE_LIMIT_WINDOW_MS,
     } : {}),
-    ...(repositories
+    ...(options.rateLimiter && !gameRuntime
+      ? { rateLimiter: options.rateLimiter, rateLimitWindowMs: env.WS_RATE_LIMIT_WINDOW_MS }
+      : {}),
+    ...(options.authorizeUser || repositories
       ? {
-          restoreRooms: async (userId: string) =>
-            (await repositories.gamePlayers.listByUser(userId)).map(({ gameId }) => `game:${gameId}`),
+          authorizeUser: options.authorizeUser ?? (async (userId: string) => {
+            const user = await repositories!.users.findById(userId);
+            if (!user || user.status === 'BANNED') {
+              throw new AppError(ErrorCode.FORBIDDEN, 403, 'User is banned or unavailable');
+            }
+          }),
+          ...(repositories
+            ? { restoreRooms: async (userId: string) =>
+                (await repositories.gamePlayers.listByUser(userId)).map(({ gameId }) => `game:${gameId}`) }
+            : {}),
         }
       : {}),
   });

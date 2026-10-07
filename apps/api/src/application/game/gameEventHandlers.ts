@@ -62,13 +62,20 @@ export function createGameEventHandlers(options: {
     'game:ready': async ({ roomId }, context) => {
       const game = await options.gameRooms.getOrCreateWaitingGame(roomId);
       if (await options.membership.isMember(game.id, context.user.id)) {
+        if (game.startingAt) {
+          await options.publisher.publishUser(context.user.id, 'game:starting', {
+            gameId: game.id,
+            startsAt: game.startingAt.toISOString(),
+            seq: game.currentSeq,
+          });
+        }
         await options.gameRooms.publishRoomState(game.id);
       }
     },
     'game:claim': async ({ gameId }, context) => {
       await ensureMember(gameId, context);
       const result = await options.claims.claim(
-        { gameId, userId: context.user.id },
+        { gameId, userId: context.user.id, requestId: context.requestId },
         await options.fences.current(gameId),
       );
       const players = await options.players.listByGame(gameId);

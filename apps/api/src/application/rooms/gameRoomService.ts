@@ -7,6 +7,7 @@ import type {
   GameEventRepository,
   GamePlayerRepository,
   GameRepository,
+  LedgerRepository,
   RoomRepository,
   UserRepository,
 } from '../../domain/repositories.js';
@@ -22,6 +23,7 @@ export class GameRoomService {
     private readonly players: GamePlayerRepository,
     private readonly users: UserRepository,
     private readonly events: GameEventRepository,
+    private readonly ledger: LedgerRepository,
     private readonly auditLogs: AuditLogRepository,
     private readonly unitOfWork: UnitOfWork,
     private readonly lifecycle: Pick<GameLifecycleService, 'createGame'>,
@@ -37,7 +39,7 @@ export class GameRoomService {
     if (room.status !== 'OPEN') throw new AppError(ErrorCode.INVALID_STATE, 409, 'Room is closed');
     const current = await this.games.findActiveByRoom(roomId);
     if (current) {
-      if (current.status === 'LOBBY') return current;
+      if (current.status === 'LOBBY' || current.status === 'STARTING') return current;
       throw new AppError(ErrorCode.CONFLICT, 409, 'Room already has a game in progress');
     }
     try {
@@ -58,7 +60,7 @@ export class GameRoomService {
     const joined = await this.unitOfWork.withTransaction(async (repositories) => {
       const game = await repositories.games.lockForUpdate(input.gameId);
       if (!game) throw new AppError(ErrorCode.NOT_FOUND, 404, 'Game not found');
-      if (game.status !== 'LOBBY') {
+      if (game.status !== 'LOBBY' && game.status !== 'STARTING') {
         throw new AppError(ErrorCode.INVALID_STATE, 409, 'Game is not waiting');
       }
       const [room, user, existing, currentPlayers, seed] = await Promise.all([
@@ -110,7 +112,6 @@ export class GameRoomService {
         gameId: game.id,
         type: 'PLAYER_JOINED',
         payload: { userId: user.id },
-        expectedStatus: 'LOBBY',
       });
       await repositories.auditLogs.record({
         action: 'STAKE_APPLIED',
@@ -122,6 +123,7 @@ export class GameRoomService {
       return reserved.player;
     });
     await this.notifyRoom(input.gameId);
+    await this.notifyWallet(input.userId);
     return joined;
   }
 
@@ -129,7 +131,7 @@ export class GameRoomService {
     await this.unitOfWork.withTransaction(async (repositories) => {
       const game = await repositories.games.lockForUpdate(gameId);
       if (!game) throw new AppError(ErrorCode.NOT_FOUND, 404, 'Game not found');
-      if (game.status !== 'LOBBY') {
+      if (game.status !== 'LOBBY' && game.status !== 'STARTING') {
         throw new AppError(ErrorCode.INVALID_STATE, 409, 'Players may only leave while waiting');
       }
       const player = await repositories.gamePlayers.findByGameAndUser(gameId, userId);
@@ -152,7 +154,6 @@ export class GameRoomService {
         gameId,
         type: 'PLAYER_LEFT',
         payload: { userId },
-        expectedStatus: 'LOBBY',
       });
       await repositories.auditLogs.record({
         action: 'STAKE_REFUNDED',
@@ -163,6 +164,7 @@ export class GameRoomService {
       });
     });
     await this.notifyRoom(gameId);
+    await this.notifyWallet(userId);
   }
 
   async cancelGame(gameId: string, reason: string, requestId?: string): Promise<void> {
@@ -221,11 +223,13 @@ export class GameRoomService {
     const member = await this.players.findByGameAndUser(gameId, userId);
     const gamePlayers = await this.players.listByGame(gameId);
     if (!member) {
-      if (game.status !== 'LOBBY') throw new AppError(ErrorCode.FORBIDDEN, 403, 'Game membership required');
+      if (game.status !== 'LOBBY' && game.status !== 'STARTING') {
+        throw new AppError(ErrorCode.FORBIDDEN, 403, 'Game membership required');
+      }
       return {
         gameId,
         roomId: game.roomId,
-        status: game.startingAt ? 'starting' : 'waiting',
+        status: game.status === 'STARTING' ? 'starting' : 'waiting',
         playerCount: gamePlayers.length,
         takenCardNumbers: gamePlayers.map(({ cardNumber }) => cardNumber),
         room: this.publicRoom(room),
@@ -269,6 +273,17 @@ export class GameRoomService {
 
   async publishRoomState(gameId: string): Promise<void> {
     await this.notifyRoom(gameId);
+  }
+
+  private async notifyWallet(userId: string): Promise<void> {
+    if (!this.publisher) return;
+    const wallet = await this.ledger.getWallet(userId);
+    if (wallet.balanceMinor > BigInt(Number.MAX_SAFE_INTEGER)) return;
+    await this.publisher.publishUser(userId, 'wallet:update', {
+      balanceMinor: Number(wallet.balanceMinor),
+      currency: 'ETB',
+      seq: wallet.version,
+    });
   }
 
   private async requireMembership(gameId: string, userId: string): Promise<GamePlayer> {

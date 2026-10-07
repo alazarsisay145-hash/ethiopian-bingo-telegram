@@ -42,6 +42,7 @@ async function createApi() {
     repositories.players,
     repositories.users,
     repositories.events,
+    repositories.ledger,
     repositories.auditLogs,
     repositories.unitOfWork,
     lifecycle as never,
@@ -116,6 +117,13 @@ describe('player HTTP API', () => {
         headers: headers(),
       });
       const gameId = created.json().gameId as string;
+      const forgedCreate = await app.inject({
+        method: 'POST',
+        url: `/api/v1/rooms/${room.id}/games`,
+        headers: headers(),
+        payload: { userId: 'another-player' },
+      });
+      expect(forgedCreate.statusCode).toBe(400);
       const preview = await app.inject({
         url: `/api/v1/rooms/${room.id}/cards/1`,
         headers: headers(),
@@ -143,6 +151,13 @@ describe('player HTTP API', () => {
         payload: { cardNumber: 1 },
       });
       expect(duplicate.statusCode).toBe(409);
+      const forgedLeave = await app.inject({
+        method: 'POST',
+        url: `/api/v1/games/${gameId}/leave`,
+        headers: headers(),
+        payload: { userId: 'another-player' },
+      });
+      expect(forgedLeave.statusCode).toBe(400);
       expect((await app.inject({ method: 'POST', url: `/api/v1/games/${gameId}/leave`, headers: headers() })).statusCode).toBe(204);
       expect((await app.inject({ method: 'POST', url: `/api/v1/games/${gameId}/leave`, headers: headers() })).statusCode).toBe(404);
     } finally {

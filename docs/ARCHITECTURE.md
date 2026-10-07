@@ -1,12 +1,12 @@
 # Architecture
 
-## Backend foundation and Phase 2 game services
+## Phase 3 multiplayer backend
 
-The pure engine, Telegram HMAC verifier, persistence, and Phase 2 game lifecycle,
-draw, claim, projection, settlement, and runner services are implemented behind
-ports. These services are dependency-injected and do not yet make the entire
-product production-ready: rooms/lobby, sessions, funded pots, admin, UI, and
-deployment operations remain extension points.
+The pure engine, Telegram HMAC verifier, persistence, game lifecycle, rooms,
+authenticated player/admin HTTP routes, WebSocket intents, funded stakes,
+countdown scheduler, claims, settlement, and runner are implemented behind
+ports. This backend is not the complete product or production-ready: JWT
+sessions, UI, payment providers, admin UI, and deployment operations remain.
 
 ## Server authority and clean layers
 
@@ -28,24 +28,24 @@ and a seeded PRNG make card and draw generation reproducible.
 
 ## Never trust the client
 
-| Client input/display      | Server-owned truth and future enforcement                                                  |
+| Client input/display      | Server-owned truth and enforcement                                                        |
 | ------------------------- | ------------------------------------------------------------------------------------------ |
-| Identity                  | Verify Telegram HMAC and age; derive user ID from signed data, later issue/revoke sessions |
+| Identity                  | Verify Telegram HMAC; resolve persisted user ID and database role/status                   |
 | Card selection number     | Authenticate membership and atomically reserve a server-generated card                     |
 | Called numbers            | Single game owner advances a persisted draw sequence                                       |
 | Bingo claim               | Load the owned card and called set; run engine against configured patterns                 |
 | Game state/status         | State machine plus durable ordered events, never client snapshots                          |
 | Cosmetic marks            | No effect on authoritative winning logic                                                   |
 | Balance or payout display | Transactional ledger, server-computed amounts, idempotency keys                            |
-| Admin controls            | Server RBAC and audit trail, never UI visibility                                           |
+| Admin controls            | Database role checks and audit trail, never UI visibility                                  |
 | Sequence/resync request   | Bound and authorize replay access; client cursor is only a hint                            |
 
-Phase 1 handshakes use signed `initData` directly (five-minute validity), not
-client-supplied IDs. They do not create persistent users or issue JWTs.
-JWT secret configuration is reserved for the session adapter. An admin allowlist
-alone does not confer implemented privileges. CORS limits browser access but is
-not an identity check. HTTP rate limiting is process-local; distributed limits,
-per-identity WS quotas and session revocation are later requirements.
+HTTP and socket handshakes use signed `initData` directly, not client-supplied
+IDs. HTTP authentication resolves the verified Telegram identity to a persisted
+user and obtains role/status from the database. `ADMIN_TELEGRAM_IDS` can bootstrap
+an initial ADMIN role on first upsert and records an audit entry. CORS is not an
+identity check. Redis-backed HTTP and per-event WebSocket rate limits are enabled.
+JWT session issuance, refresh, and revocation are deferred.
 
 ## Persistence and single-owner orchestration
 
@@ -56,15 +56,17 @@ per-identity WS quotas and session revocation are later requirements.
 users, card ownership, game events and the ledger; constraints, not application checks, enforce
 uniqueness, append-only history and non-negative balances. See [Data model](DATA_MODEL.md).
 
-**Phase 2 services:** lifecycle and claim/draw operations depend on repository
-and secret/lock ports; the runner acquires and heartbeats the fenced lease; the
-projector folds persisted events; socket handlers enforce membership and bounded
-resync. The room-level ready handler remains `NOT_FOUND` pending the room service.
+**Phase 2–3 services:** room/game-room services expose safe summaries and
+membership-scoped projections. The unit-of-work combines stake debit, server
+card reservation, pot update, and event append; leave/cancel refunds are
+idempotent and transactional. A persisted `starting_at` countdown is recovered
+by the lease-protected lobby scheduler. Claims/draws/settlement remain server
+services, and only the fenced `GameRunner` draws. Socket handlers enforce
+membership and bounded resync, restoring active game rooms after reconnect.
 
-**Still future:** no stake collection/unit-of-work exists, so the pot is not
-automatically funded. Sessions, the rooms service, persistent profile management,
-admin, UI, payments, multi-region operations, and deployment are not implemented.
-These omissions prevent a production-ready release.
+**Still future:** JWT sessions, payment providers, visual UI, admin UI,
+multi-region operations, and production deployment/observability. These
+omissions prevent a production-ready release.
 
 Only one process advances a game. The Redis lease (heartbeat + fencing token) selects the owner;
 writes carrying a stale fencing token are rejected by Postgres. Persist each meaningful event
@@ -102,10 +104,10 @@ an active projection.
 
 ## Runtime boundaries
 
-HTTP uses Helmet, explicit origin CORS, rate limits, request IDs and structured
-errors. Unhandled errors return generic `INTERNAL`; sensitive headers and
-credentials are redacted in logs. WS validates every intent after HMAC
-authentication and exposes typed application handler injection.
+HTTP uses Helmet, explicit origin CORS, authenticated user/IP rate limits,
+request IDs and structured errors. Unhandled errors return generic `INTERNAL`;
+initData and credentials are never logged. WS validates every intent after HMAC
+authentication and limits sensitive intents per user.
 `/healthz` is liveness; `/readyz` reports dependency status honestly.
 Shutdown closes sockets and HTTP listeners. Future game owners must additionally
 persist state and release leases through lifecycle adapters.

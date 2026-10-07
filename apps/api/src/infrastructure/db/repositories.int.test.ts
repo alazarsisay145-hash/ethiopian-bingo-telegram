@@ -1,6 +1,8 @@
 import { afterAll, describe, expect, inject, it } from 'vitest';
 import { AppError, ErrorCode } from '@bingo/shared';
 import { cells, createFixtures } from '../../integration-support.js';
+import { PrismaUnitOfWork } from './unitOfWork.js';
+import { PrismaUserRepository } from './userRepository.js';
 
 const enabled = inject('dockerAvailable');
 if (!enabled) console.warn('[integration] Docker unavailable: skipping repository tests');
@@ -44,6 +46,21 @@ describe.skipIf(!enabled)('Postgres repositories', () => {
       expect(await db.wallet.count({ where: { userId: users[0]?.id } })).toBe(1);
     });
 
+    it('bootstraps an allowlisted admin once and writes an audit entry', async () => {
+      const telegramId = BigInt(Date.now()) * 1000n + 9n;
+      const users = new PrismaUserRepository(db, [Number(telegramId)]);
+      const first = await users.upsertFromTelegram({ telegramId, firstName: 'Initial admin' });
+      expect(first.role).toBe('ADMIN');
+      const second = await new PrismaUserRepository(db).upsertFromTelegram({
+        telegramId,
+        firstName: 'Updated profile',
+      });
+      expect(second.role).toBe('ADMIN');
+      expect(await db.auditLog.count({
+        where: { action: 'ROLE_BOOTSTRAPPED', targetId: first.id },
+      })).toBe(1);
+    });
+
     it('handles status, last seen and unknown ids', async () => {
       const user = await fx.newUser();
       expect((await repos.users.setStatus(user.id, 'BANNED')).status).toBe('BANNED');
@@ -61,6 +78,84 @@ describe.skipIf(!enabled)('Postgres repositories', () => {
       await repos.games.updateStatus(game.id, 'CANCELLED');
       const replacement = await repos.games.create({ roomId: game.roomId });
       expect(replacement.status).toBe('LOBBY');
+    });
+
+    describe('transactional game-room joins', () => {
+      it('reserves a contested card and debits exactly one stake in the same transaction', async () => {
+        const game = await fx.newGame();
+        const [first, second] = await Promise.all([fx.newUser(), fx.newUser()]);
+        for (const user of [first, second]) {
+          await repos.ledger.apply({
+            userId: user.id,
+            type: 'ADMIN_ADJUSTMENT',
+            amountMinor: 100n,
+            idempotencyKey: `test-wallet:${user.id}`,
+          });
+        }
+        const unitOfWork = new PrismaUnitOfWork(db);
+        const join = (userId: string) => unitOfWork.withTransaction(async (transaction) => {
+          const locked = await transaction.games.lockForUpdate(game.id);
+          if (!locked || locked.status !== 'LOBBY') throw new Error('Game not waiting');
+          const result = await transaction.gamePlayers.reserveCard({
+            gameId: game.id,
+            userId,
+            cardNumber: 1,
+            cardCells: cells(),
+          });
+          if (result.kind !== 'reserved') {
+            throw new AppError(
+              result.kind === 'card_taken' ? ErrorCode.CARD_TAKEN : ErrorCode.CONFLICT,
+              409,
+              'Card unavailable',
+            );
+          }
+          await transaction.ledger.apply({
+            userId,
+            type: 'STAKE',
+            amountMinor: -10n,
+            refType: 'game',
+            refId: game.id,
+            idempotencyKey: `game:${game.id}:stake:${userId}`,
+          });
+          await transaction.games.adjustPotMinor(game.id, 10n);
+          await transaction.gameEvents.append({
+            gameId: game.id,
+            type: 'PLAYER_JOINED',
+            payload: { userId },
+          });
+        });
+        const results = await Promise.allSettled([join(first.id), join(second.id)]);
+        expect(results.filter(({ status }) => status === 'fulfilled')).toHaveLength(1);
+        expect(results.filter(({ status }) => status === 'rejected')).toHaveLength(1);
+        expect(await repos.gamePlayers.listByGame(game.id)).toHaveLength(1);
+        expect((await repos.games.findById(game.id))?.potMinor).toBe(10n);
+        expect(await repos.ledger.getBalance(first.id) + await repos.ledger.getBalance(second.id)).toBe(190n);
+        expect(await repos.gameEvents.latestSeq(game.id)).toBe(1);
+      });
+
+      it('rolls back the card reservation if a stake debit fails', async () => {
+        const game = await fx.newGame();
+        const user = await fx.newUser();
+        const unitOfWork = new PrismaUnitOfWork(db);
+        await expect(unitOfWork.withTransaction(async (transaction) => {
+          await transaction.gamePlayers.reserveCard({
+            gameId: game.id,
+            userId: user.id,
+            cardNumber: 1,
+            cardCells: cells(),
+          });
+          await transaction.ledger.apply({
+            userId: user.id,
+            type: 'STAKE',
+            amountMinor: -10n,
+            refType: 'game',
+            refId: game.id,
+            idempotencyKey: `game:${game.id}:stake:${user.id}`,
+          });
+        })).rejects.toMatchObject({ code: ErrorCode.INSUFFICIENT_FUNDS });
+        expect(await repos.gamePlayers.findByGameAndUser(game.id, user.id)).toBeNull();
+        expect((await repos.games.findById(game.id))?.potMinor).toBe(0n);
+      });
     });
 
     it('never exposes secrets and enforces the game state machine and seed lifecycle', async () => {

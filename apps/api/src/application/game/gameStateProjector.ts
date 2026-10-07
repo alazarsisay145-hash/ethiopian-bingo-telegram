@@ -42,7 +42,7 @@ export class GameStateProjector {
                 ? 'finished'
                 : 'cancelled';
     }
-    if (game.status === 'LOBBY' && game.startingAt) state.status = 'starting';
+    if (game.status === 'STARTING') state.status = 'starting';
     return state;
   }
 }

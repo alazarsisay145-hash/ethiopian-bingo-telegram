@@ -36,7 +36,9 @@ async function createLobby() {
   const runner = { start: vi.fn(async () => true) };
   const lifecycle = {
     async startGame(gameId: string, fence: { instanceId: string; fencingToken: bigint }) {
-      await repositories.games.updateStatus(gameId, 'STARTING', fence);
+      if ((await repositories.games.findById(gameId))?.status === 'LOBBY') {
+        await repositories.games.updateStatus(gameId, 'STARTING', fence);
+      }
       const active = await repositories.games.updateStatus(gameId, 'RUNNING', fence);
       return { game: active, players: await repositories.players.listByGame(gameId) };
     },

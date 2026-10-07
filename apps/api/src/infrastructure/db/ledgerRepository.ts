@@ -82,6 +82,13 @@ export class PrismaLedgerRepository implements LedgerRepository {
     return wallet.balanceMinor;
   }
 
+  async getWallet(userId: string): Promise<{ balanceMinor: bigint; currency: string; version: number }> {
+    requireUuid(userId, 'userId');
+    const wallet = await this.db.wallet.findUnique({ where: { userId } });
+    if (!wallet) throw notFound('Wallet');
+    return { balanceMinor: wallet.balanceMinor, currency: wallet.currency, version: wallet.version };
+  }
+
   async listByUser(
     userId: string,
     options: { limit?: number; before?: Date } = {},

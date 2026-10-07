@@ -179,14 +179,16 @@ export function createInMemoryRepositories(clock: Clock = { now: () => new Date(
     async lockForUpdate(id) { return clone(gameRows.get(id) ?? null); },
     async adjustPotMinor(id, deltaMinor) {
       const row = game(id);
-      if (!['LOBBY', 'CANCELLED'].includes(row.status) || row.potMinor + deltaMinor < 0n) conflict('Game pot cannot be changed in its current state');
+      if (!['LOBBY', 'STARTING', 'CANCELLED'].includes(row.status) || row.potMinor + deltaMinor < 0n) conflict('Game pot cannot be changed in its current state');
       row.potMinor += deltaMinor;
       return clone(row);
     },
     async setStartingAt(id, startingAt) {
       const row = gameRows.get(id);
-      if (!row || row.status !== 'LOBBY' || (startingAt && row.startingAt) || (!startingAt && !row.startingAt)) return null;
+      if (!row || (startingAt && (row.status !== 'LOBBY' || row.startingAt)) ||
+        (!startingAt && (row.status !== 'STARTING' || !row.startingAt))) return null;
       row.startingAt = startingAt;
+      row.status = startingAt ? 'STARTING' : 'LOBBY';
       return clone(row);
     },
     async listRunnable() { return clone([...gameRows.values()].filter((row) => ['RUNNING', 'SETTLING'].includes(row.status))); },
@@ -336,6 +338,11 @@ export function createInMemoryRepositories(clock: Clock = { now: () => new Date(
       return clone(entry);
     },
     async getBalance(id) { uuid.parse(id); return (wallets.get(id) ?? missing('Wallet not found')).balanceMinor; },
+    async getWallet(id) {
+      uuid.parse(id);
+      const wallet = wallets.get(id) ?? missing('Wallet not found');
+      return clone({ balanceMinor: wallet.balanceMinor, currency: wallet.currency, version: wallet.version });
+    },
     async listByUser(id, options = {}) {
       return clone([...ledgerRows.values()].filter((row) => row.userId === id && (!options.before || row.createdAt < options.before))
         .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime() || b.id.localeCompare(a.id))

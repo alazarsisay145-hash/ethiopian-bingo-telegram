@@ -181,6 +181,7 @@ export interface LedgerRepository {
    */
   apply(input: LedgerApplyInput): Promise<LedgerEntry>;
   getBalance(userId: string): Promise<bigint>;
+  getWallet(userId: string): Promise<{ balanceMinor: bigint; currency: string; version: number }>;
   listByUser(userId: string, options?: { limit?: number; before?: Date }): Promise<LedgerEntry[]>;
 }
 

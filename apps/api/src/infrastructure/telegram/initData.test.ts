@@ -24,6 +24,18 @@ describe('Telegram initData verification', () => {
     expect(persistedTelegramId).toBe(12345n);
     expect(profile).toMatchObject({ id: 'user-database-id', telegramId: 12345 });
   });
+  it('rejects persisted banned users after Telegram signature verification', async () => {
+    const users = {
+      upsertFromTelegram: async () => ({
+        id: 'user-database-id',
+        firstName: 'Test',
+        username: null,
+        status: 'BANNED',
+      }),
+    } as unknown as UserRepository;
+    await expect(new TelegramAuthentication(testBotToken, {}, users).authenticate(signedInitData()))
+      .rejects.toMatchObject({ code: 'FORBIDDEN', httpStatus: 403 });
+  });
   it('verifies decoded values, plus signs, Unicode, and arbitrary key ordering', () => {
     const data = signedInitData({ user: JSON.stringify({ id: 123, first_name: 'ሰላም + Test' }), query_id: 'a+b=c' });
     const reversed = [...new URLSearchParams(data).entries()].reverse();

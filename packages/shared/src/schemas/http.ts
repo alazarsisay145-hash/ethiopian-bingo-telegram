@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { patternIdSchema, productGameStatusSchema } from './models.js';
 
 export const uuidSchema = z.string().uuid();
+export const emptyBodySchema = z.object({}).strict();
 export const gameParamsSchema = z.object({ gameId: uuidSchema }).strict();
 export const roomParamsSchema = z.object({ roomId: uuidSchema }).strict();
 export const cardParamsSchema = roomParamsSchema.extend({

@@ -41,7 +41,7 @@ export class LobbyScheduler {
   }
 
   async recover(): Promise<void> {
-    const lobbies = await this.games.listByStatus(['LOBBY']);
+    const lobbies = await this.games.listByStatus(['LOBBY', 'STARTING']);
     await Promise.allSettled(lobbies.map((game) => this.reconcile(game.id)));
   }
 
@@ -55,12 +55,12 @@ export class LobbyScheduler {
 
   private async reconcile(gameId: string): Promise<void> {
     const game = await this.games.findById(gameId);
-    if (!game || game.status !== 'LOBBY') return;
+    if (!game || (game.status !== 'LOBBY' && game.status !== 'STARTING')) return;
     const [room, players] = await Promise.all([
       this.rooms.findById(game.roomId),
       this.players.listByGame(gameId),
     ]);
-    if (!room || room.status !== 'OPEN') return;
+    if (!room) return;
     if (players.length < room.minPlayers) {
       if (game.startingAt) {
         await this.games.setStartingAt(gameId, null);
@@ -68,7 +68,7 @@ export class LobbyScheduler {
       }
       return;
     }
-    if (!game.startingAt) {
+    if (!game.startingAt && game.status === 'LOBBY') {
       const startsAt = new Date(this.clock.now().getTime() + (room.startCountdownMs ?? 15_000));
       const updated = await this.games.setStartingAt(gameId, startsAt);
       if (updated) {
@@ -82,6 +82,7 @@ export class LobbyScheduler {
       }
       return;
     }
+    if (!game.startingAt) return;
     if (game.startingAt.getTime() > this.clock.now().getTime()) return;
     await this.startWaitingGame(gameId, room.minPlayers);
   }

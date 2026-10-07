@@ -24,6 +24,7 @@ export function attachSocketServer(
     origins: string[];
     logger: Pick<Logger, 'error'>;
     restoreRooms?: (userId: string) => Promise<string[]>;
+    authorizeUser?: (userId: string) => Promise<void>;
     rateLimiter?: RateLimiter;
     rateLimitWindowMs?: number;
   },
@@ -46,9 +47,12 @@ export function attachSocketServer(
       }
       socket.data.user = userProfileSchema.parse(await options.authentication.authenticate(auth.initData));
     };
-    void authenticate().then(() => next()).catch(() => {
-      const error = new Error('UNAUTHORIZED') as Error & { data: { code: ErrorCode } };
-      error.data = { code: ErrorCode.UNAUTHORIZED };
+    void authenticate().then(() => next()).catch((failure: unknown) => {
+      const code = failure instanceof AppError && failure.code === ErrorCode.FORBIDDEN
+        ? ErrorCode.FORBIDDEN
+        : ErrorCode.UNAUTHORIZED;
+      const error = new Error(code) as Error & { data: { code: ErrorCode } };
+      error.data = { code };
       next(error);
     });
   });
@@ -65,6 +69,7 @@ export function attachSocketServer(
       const requestId = randomUUID();
       const ack: Ack | undefined = typeof acknowledge === 'function' ? acknowledge as Ack : undefined;
       try {
+        await options.authorizeUser?.(socket.data.user.id);
         const limits: Partial<Record<ClientEvent, number>> = {
           'game:claim': 5,
           'card:select': 10,

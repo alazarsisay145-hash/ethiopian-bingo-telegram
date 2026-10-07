@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { io, type Socket } from 'socket.io-client';
-import { ErrorCode } from '@bingo/shared';
+import { AppError, ErrorCode } from '@bingo/shared';
 import type { ErrorDto } from '@bingo/shared';
 import type { FastifyInstance } from 'fastify';
 import { buildApp, type BuildAppOptions } from '../../app.js';
 import { signedInitData, testEnv } from '../../test-support.js';
+import { InMemoryRateLimiter } from '../../../test/fakes/gameFakes.js';
 
 let app: FastifyInstance | undefined;
 const clients: Socket[] = [];
@@ -66,6 +67,17 @@ describe('Socket.IO authentication and intent boundary', () => {
     const socket = client(await start(), { initData: signedInitData({ auth_date: '1' }) });
     expect((await rejected(socket)).message).toBe('UNAUTHORIZED');
   });
+  it('rejects a persisted banned user rather than allowing a socket session', async () => {
+    const socket = client(await start({
+      authentication: {
+        authenticate: async () => {
+          throw new AppError(ErrorCode.FORBIDDEN, 403, 'User is banned');
+        },
+      },
+    }), { initData: 'verified' });
+    const error = await rejected(socket);
+    expect(error.data?.code).toBe(ErrorCode.FORBIDDEN);
+  });
   it('rejects untrusted browser origins even for websocket transport', async () => {
     const socket = io(await start(), {
       auth: { initData: signedInitData() }, transports: ['websocket'],
@@ -94,6 +106,37 @@ describe('Socket.IO authentication and intent boundary', () => {
     const failure = errorEvent(socket);
     socket.emit('card:select', { roomId: 'room-1', cardNumber: -1 });
     expect((await failure).error.code).toBe(ErrorCode.VALIDATION_ERROR);
+    expect(handler).not.toHaveBeenCalled();
+  });
+  it('applies per-user WebSocket intent limits', async () => {
+    const handler = vi.fn(async () => undefined);
+    const socket = client(await start({
+      rateLimiter: new InMemoryRateLimiter(),
+      eventHandlers: { 'game:claim': handler },
+    }), { initData: signedInitData() });
+    await connected(socket);
+    for (let index = 0; index < 5; index += 1) {
+      const result = new Promise<{ ok: boolean }>((resolve) =>
+        socket.emit('game:claim', { gameId: 'game-1' }, resolve));
+      await expect(result).resolves.toEqual({ ok: true });
+    }
+    const limited = new Promise<{ ok: boolean; error?: { code: string } }>((resolve) =>
+      socket.emit('game:claim', { gameId: 'game-1' }, resolve));
+    expect(await limited).toMatchObject({ ok: false, error: { code: ErrorCode.RATE_LIMITED } });
+    expect(handler).toHaveBeenCalledTimes(5);
+  });
+  it('rechecks persisted user status before each socket intent', async () => {
+    const handler = vi.fn(async () => undefined);
+    const socket = client(await start({
+      authorizeUser: async () => {
+        throw new AppError(ErrorCode.FORBIDDEN, 403, 'User was banned');
+      },
+      eventHandlers: { 'room:join': handler },
+    }), { initData: signedInitData() });
+    await connected(socket);
+    const result = new Promise<{ ok: boolean; error?: { code: string } }>((resolve) =>
+      socket.emit('room:join', { roomId: 'room-1' }, resolve));
+    expect(await result).toMatchObject({ ok: false, error: { code: ErrorCode.FORBIDDEN } });
     expect(handler).not.toHaveBeenCalled();
   });
   it.each(['room:join', 'room:leave', 'card:select', 'card:release', 'game:ready', 'game:claim', 'state:resync'])(
